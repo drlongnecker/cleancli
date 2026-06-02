@@ -4,12 +4,17 @@ $script:CleanCliState = [ordered]@{
     OriginalPrompt = $null
     OriginalContinuationPrompt = $null
     OriginalPromptText = $null
+    OriginalExtraPromptLineCount = $null
+    OriginalPSReadLineOptionsCaptured = $false
     OriginalKeyHandlers = @{}
     LastPromptMilliseconds = 0
     LastGitDurationMilliseconds = 0
     LastGit = $null
     LastSlowGit = $null
     LastGitProcessCount = 0
+    HostName = $null
+    LoadStatus = 'not-started'
+    LoadReason = ''
     StartedAt = [datetime]::Now
 }
 $script:CleanCliGitCache = @{}
@@ -17,6 +22,7 @@ $script:CleanCliGitLastSuccessful = @{}
 $script:CleanCliGitAsyncRefreshes = @{}
 $script:CleanCliGitCommand = $null
 $script:CleanCliGitAsyncCommand = $null
+$script:CleanCliCommandDurationProvider = $null
 $script:CleanCliGitTimeoutMilliseconds = 1000
 $script:CleanCliGitCacheMilliseconds = 750
 $script:CleanCliDefaultOptions = [ordered]@{
@@ -29,6 +35,28 @@ $script:CleanCliDefaultOptions = [ordered]@{
     GitDivergenceMode = 'none'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'
+    IconMode = 'disabled'
+    CommandDurationThresholdMilliseconds = 2000
+    RightPrompt = $false
+    PromptSeparator = 'auto'
+    PathSymbol = 'auto'
+    GitSymbol = 'auto'
+    DirtySymbol = 'auto'
+    AdminSymbol = 'auto'
+    TimeSymbol = 'auto'
+    AdminForeground = 'Yellow'
+    AdminBackground = 'Black'
+    PathForeground = 'White'
+    PathBackground = 'Magenta'
+    GitForeground = 'Black'
+    GitBackground = 'Green'
+    TimeForeground = 'Black'
+    TimeBackground = 'Yellow'
+    KeyBindingPreset = 'zsh'
+    EnableInCodex = $true
+    EnableInVSCode = $true
+    EnableInWindowsTerminal = $true
+    EnableInPlainConsole = $true
     AsciiMode = $false
     TransientPrompt = $false
 }
@@ -40,6 +68,9 @@ $script:CleanCliSlowGitRepositories = @{}
 . (Join-Path $script:CleanCliRoot 'Git.ps1')
 . (Join-Path $script:CleanCliRoot 'Prompt.ps1')
 . (Join-Path $script:CleanCliRoot 'PSReadLine.ps1')
+. (Join-Path $script:CleanCliRoot 'Icons.ps1')
+. (Join-Path $script:CleanCliRoot 'Navigation.ps1')
+. (Join-Path $script:CleanCliRoot 'Operations.ps1')
 
 function Enable-CleanCli {
     [CmdletBinding()]
@@ -51,13 +82,14 @@ function Enable-CleanCli {
 
     $script:CleanCliState.OriginalPrompt = $function:global:prompt
 
-    if (Get-Module PSReadLine -ErrorAction SilentlyContinue) {
-        $options = Get-PSReadLineOption
-        $script:CleanCliState.OriginalContinuationPrompt = $options.ContinuationPrompt
-        $script:CleanCliState.OriginalPromptText = $options.PromptText
+    Initialize-CleanCliOptions | Out-Null
+    $script:CleanCliState.HostName = Get-CleanCliHostName
+    if (-not (Test-CleanCliHostEnabled -HostName $script:CleanCliState.HostName)) {
+        $script:CleanCliState.LoadStatus = 'skipped'
+        $script:CleanCliState.LoadReason = "$($script:CleanCliState.HostName) host disabled by CleanCli config."
+        return
     }
 
-    Initialize-CleanCliOptions | Out-Null
     Set-CleanCliPSReadLine
     Set-Item -Path Function:\global:prompt -Value {
         $module = Get-Module CleanCli
@@ -68,6 +100,8 @@ function Enable-CleanCli {
         'PS> '
     }
     $script:CleanCliState.Enabled = $true
+    $script:CleanCliState.LoadStatus = 'enabled'
+    $script:CleanCliState.LoadReason = "$($script:CleanCliState.HostName) host enabled."
 }
 
 function Disable-CleanCli {
@@ -93,6 +127,9 @@ function Get-CleanCliStatus {
         LastGitDurationMilliseconds = [math]::Round([double]$script:CleanCliState.LastGitDurationMilliseconds, 2)
         LastGit = $script:CleanCliState.LastGit
         LastSlowGit = $script:CleanCliState.LastSlowGit
+        HostName = $script:CleanCliState.HostName
+        LoadStatus = $script:CleanCliState.LoadStatus
+        LoadReason = $script:CleanCliState.LoadReason
         GitCacheEntries = $script:CleanCliGitCache.Count
         GitTimeoutMilliseconds = $script:CleanCliGitTimeoutMilliseconds
         GitProcessCount = $script:CleanCliState.LastGitProcessCount
@@ -115,18 +152,46 @@ function Measure-CleanCliStartup {
     $noProfile = Measure-Command {
         & $PowerShellPath -NoProfile -Command '$PSVersionTable.PSVersion.ToString() | Out-Null'
     }
-    $moduleImport = Measure-Command {
+    $cleanCliImport = Measure-Command {
+        & $PowerShellPath -NoProfile -Command "Import-Module '$modulePath' -Force"
+    }
+    $cleanCliEnable = Measure-Command {
         & $PowerShellPath -NoProfile -Command "Import-Module '$modulePath' -Force; Enable-CleanCli; Get-CleanCliStatus | Out-Null"
+    }
+    $terminalIconsImport = Measure-Command {
+        & $PowerShellPath -NoProfile -Command 'Import-Module Terminal-Icons -ErrorAction SilentlyContinue'
+    }
+    $cleanCliWithTerminalIcons = Measure-Command {
+        & $PowerShellPath -NoProfile -Command "Import-Module Terminal-Icons -ErrorAction SilentlyContinue; Import-Module '$modulePath' -Force; Enable-CleanCli; Get-CleanCliStatus | Out-Null"
     }
     $profileLoad = Measure-Command {
         & $PowerShellPath -Command 'exit'
     }
+    $oldInteractiveOnly = $env:CLEANCLI_INTERACTIVE_ONLY
+    try {
+        $env:CLEANCLI_INTERACTIVE_ONLY = '0'
+        $forcedProfileLoad = Measure-Command {
+            & $PowerShellPath -Command 'exit'
+        }
+    }
+    finally {
+        if ($null -eq $oldInteractiveOnly) {
+            Remove-Item Env:\CLEANCLI_INTERACTIVE_ONLY -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:CLEANCLI_INTERACTIVE_ONLY = $oldInteractiveOnly
+        }
+    }
 
     [pscustomobject]@{
         NoProfileMilliseconds = [math]::Round($noProfile.TotalMilliseconds, 2)
-        ModuleImportMilliseconds = [math]::Round($moduleImport.TotalMilliseconds, 2)
+        CleanCliImportMilliseconds = [math]::Round($cleanCliImport.TotalMilliseconds, 2)
+        CleanCliEnableMilliseconds = [math]::Round($cleanCliEnable.TotalMilliseconds, 2)
+        TerminalIconsImportMilliseconds = [math]::Round($terminalIconsImport.TotalMilliseconds, 2)
+        CleanCliWithTerminalIconsMilliseconds = [math]::Round($cleanCliWithTerminalIcons.TotalMilliseconds, 2)
         ProfileLoadMilliseconds = [math]::Round($profileLoad.TotalMilliseconds, 2)
+        ForcedProfileLoadMilliseconds = [math]::Round($forcedProfileLoad.TotalMilliseconds, 2)
     }
 }
 
-Export-ModuleMember -Function Enable-CleanCli, Disable-CleanCli, Get-CleanCliStatus, Measure-CleanCliStartup, Get-CleanCliOption, Set-CleanCliOption
+Export-ModuleMember -Function Enable-CleanCli, Disable-CleanCli, Get-CleanCliStatus, Measure-CleanCliStartup, Get-CleanCliOption, Set-CleanCliOption, Get-CleanCliChildItem, Set-CleanCliLocation, Get-CleanCliLocationHistory, Open-CleanCliExplorer, Show-CleanCliGitLog, Install-CleanCli

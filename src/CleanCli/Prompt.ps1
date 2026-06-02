@@ -1,26 +1,48 @@
+function Resolve-CleanCliPromptSymbol {
+    param(
+        [string]$Value,
+        [string]$DefaultValue
+    )
+
+    if ($Value -and $Value -ne 'auto') {
+        return $Value
+    }
+
+    $DefaultValue
+}
+
 function Get-CleanCliSymbols {
     $options = Get-CleanCliOption
+
     if ($env:CLEANCLI_ASCII -eq '1' -or $options.AsciiMode) {
         return [pscustomobject]@{
-            Separator = '>'
-            Branch = 'git:'
-            Dirty = '*'
-            Path = 'dir:'
-            Admin = 'admin'
+            Separator = Resolve-CleanCliPromptSymbol -Value $options.PromptSeparator -DefaultValue '>'
+            Branch = Resolve-CleanCliPromptSymbol -Value $options.GitSymbol -DefaultValue 'git:'
+            Dirty = Resolve-CleanCliPromptSymbol -Value $options.DirtySymbol -DefaultValue '*'
+            Path = Resolve-CleanCliPromptSymbol -Value $options.PathSymbol -DefaultValue 'dir:'
+            Admin = Resolve-CleanCliPromptSymbol -Value $options.AdminSymbol -DefaultValue 'admin'
+            Time = Resolve-CleanCliPromptSymbol -Value $options.TimeSymbol -DefaultValue 'time:'
             Success = '+'
             Error = '!'
         }
     }
 
     [pscustomobject]@{
-        Separator = [string][char]0xe0b0
-        Branch = [string][char]0xe0a0
-        Dirty = [string][char]0xf044
-        Path = [string][char]0xe5ff
-        Admin = [string][char]0xf0e7
+        Separator = Resolve-CleanCliPromptSymbol -Value $options.PromptSeparator -DefaultValue ([string][char]0xe0b0)
+        Branch = Resolve-CleanCliPromptSymbol -Value $options.GitSymbol -DefaultValue ([string][char]0xe0a0)
+        Dirty = Resolve-CleanCliPromptSymbol -Value $options.DirtySymbol -DefaultValue ([string][char]0xf044)
+        Path = Resolve-CleanCliPromptSymbol -Value $options.PathSymbol -DefaultValue ([string][char]0xe5ff)
+        Admin = Resolve-CleanCliPromptSymbol -Value $options.AdminSymbol -DefaultValue ([string][char]0xf0e7)
+        Time = Resolve-CleanCliPromptSymbol -Value $options.TimeSymbol -DefaultValue ([string][char]0xf017)
         Success = [string][char]0x2713
         Error = [string][char]0x2717
     }
+}
+
+function New-CleanCliAdminSegment {
+    $options = Get-CleanCliOption
+    $symbols = Get-CleanCliSymbols
+    New-CleanCliSegment -Text $symbols.Admin -Foreground $options.AdminForeground -Background $options.AdminBackground
 }
 
 function Test-CleanCliAdministrator {
@@ -118,6 +140,8 @@ function Get-CleanCliAnsiCode {
             'Blue' { 44 }
             'Magenta' { 45 }
             'Cyan' { 46 }
+            'White' { 47 }
+            'DarkGray' { 100 }
             'Default' { 49 }
             default { 100 }
         }
@@ -132,6 +156,9 @@ function Get-CleanCliAnsiCode {
         'Blue' { 34 }
         'Magenta' { 35 }
         'Cyan' { 36 }
+        'White' { 37 }
+        'DarkGray' { 90 }
+        'Default' { 39 }
         default { 37 }
     }
 }
@@ -200,6 +227,48 @@ function Get-CleanCliVisiblePromptLength {
     (($PromptText -replace "`e\[[0-9;]*m", '')).Length
 }
 
+function Get-CleanCliConsoleWidth {
+    try {
+        if ($Host.UI.RawUI.WindowSize.Width -gt 0) {
+            return $Host.UI.RawUI.WindowSize.Width
+        }
+    }
+    catch {
+    }
+
+    try {
+        return [Console]::WindowWidth
+    }
+    catch {
+        return 0
+    }
+}
+
+function Test-CleanCliRightPromptSupported {
+    if ($env:NO_COLOR) {
+        return $false
+    }
+
+    (Get-CleanCliConsoleWidth) -gt 0
+}
+
+function Format-CleanCliRightPrompt {
+    param(
+        [string]$LeftText,
+        [string]$RightText,
+        [int]$Width = (Get-CleanCliConsoleWidth)
+    )
+
+    if (-not $RightText -or $Width -le 0) {
+        return ''
+    }
+
+    $escape = [char]27
+    $visibleRight = Get-CleanCliVisiblePromptLength -PromptText $RightText
+    $column = [Math]::Max(1, $Width - $visibleRight + 1)
+    "$escape[s$escape[${column}G$RightText$escape[u"
+}
+
 function Test-CleanCliTwoLinePrompt {
     param(
         [string]$PromptText,
@@ -215,6 +284,50 @@ function Test-CleanCliTwoLinePrompt {
     }
 
     $false
+}
+
+function Format-CleanCliCommandDuration {
+    param([double]$Milliseconds)
+
+    if ($Milliseconds -lt 1000) {
+        return "$([math]::Round($Milliseconds))ms"
+    }
+
+    $duration = [timespan]::FromMilliseconds($Milliseconds)
+    if ($duration.TotalHours -ge 1) {
+        return '{0}h {1}m' -f [math]::Floor($duration.TotalHours), $duration.Minutes
+    }
+
+    if ($duration.TotalMinutes -ge 1) {
+        return '{0}m {1}s' -f [math]::Floor($duration.TotalMinutes), $duration.Seconds
+    }
+
+    '{0:0.#}s' -f $duration.TotalSeconds
+}
+
+function Get-CleanCliLastCommandDurationMilliseconds {
+    if ($script:CleanCliCommandDurationProvider) {
+        return & $script:CleanCliCommandDurationProvider
+    }
+
+    $history = Get-History -Count 1 -ErrorAction SilentlyContinue
+    if (-not $history -or -not $history.StartExecutionTime -or -not $history.EndExecutionTime) {
+        return $null
+    }
+
+    ($history.EndExecutionTime - $history.StartExecutionTime).TotalMilliseconds
+}
+
+function Get-CleanCliCommandDurationPromptText {
+    param([object]$Options)
+
+    $milliseconds = Get-CleanCliLastCommandDurationMilliseconds
+    if ($null -eq $milliseconds -or $milliseconds -lt $Options.CommandDurationThresholdMilliseconds) {
+        return ''
+    }
+
+    $symbols = Get-CleanCliSymbols
+    '{0} {1}' -f $symbols.Time, (Format-CleanCliCommandDuration -Milliseconds $milliseconds)
 }
 
 function Get-CleanCliGitPromptText {
@@ -264,19 +377,42 @@ function Invoke-CleanCliPrompt {
     try {
         $segments = New-Object System.Collections.Generic.List[object]
         if (Test-CleanCliAdministrator) {
-            $segments.Add((New-CleanCliSegment -Text $symbols.Admin -Foreground Yellow -Background Black))
+            $segments.Add((New-CleanCliAdminSegment))
         }
 
         $pathText = '{0} {1}' -f $symbols.Path, (Get-CleanCliShortPath)
-        $segments.Add((New-CleanCliSegment -Text $pathText -Foreground White -Background Magenta))
+        $segments.Add((New-CleanCliSegment -Text $pathText -Foreground $options.PathForeground -Background $options.PathBackground))
+
+        $rightSegments = New-Object System.Collections.Generic.List[object]
+        $useRightPrompt = $options.RightPrompt -and (Test-CleanCliRightPromptSupported)
 
         $git = Get-CleanCliGitInfo
         $gitText = Get-CleanCliGitPromptText -Git $git
         if ($gitText) {
-            $segments.Add((New-CleanCliSegment -Text $gitText -Foreground Black -Background Green))
+            if ($useRightPrompt) {
+                $rightSegments.Add((New-CleanCliSegment -Text $gitText -Foreground $options.GitForeground -Background $options.GitBackground))
+            }
+            else {
+                $segments.Add((New-CleanCliSegment -Text $gitText -Foreground $options.GitForeground -Background $options.GitBackground))
+            }
+        }
+
+        $durationText = Get-CleanCliCommandDurationPromptText -Options $options
+        if ($durationText) {
+            if ($useRightPrompt) {
+                $rightSegments.Add((New-CleanCliSegment -Text $durationText -Foreground $options.TimeForeground -Background $options.TimeBackground))
+            }
+            else {
+                $segments.Add((New-CleanCliSegment -Text $durationText -Foreground $options.TimeForeground -Background $options.TimeBackground))
+            }
         }
 
         $promptText = Format-CleanCliPromptSegments -Segments $segments
+        if ($useRightPrompt -and $rightSegments.Count -gt 0) {
+            $rightPromptText = (Format-CleanCliPromptSegments -Segments $rightSegments).TrimEnd()
+            $promptText += Format-CleanCliRightPrompt -LeftText $promptText -RightText $rightPromptText
+        }
+
         if (Test-CleanCliTwoLinePrompt -PromptText $promptText -Options $options) {
             $promptText = $promptText.TrimEnd() + "`n$($symbols.Separator) "
         }

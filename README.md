@@ -60,6 +60,28 @@ Example:
     GitDivergenceMode = 'none'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'
+    IconMode = 'disabled'
+    CommandDurationThresholdMilliseconds = 2000
+    RightPrompt = $false
+    PromptSeparator = 'auto'
+    PathSymbol = 'auto'
+    GitSymbol = 'auto'
+    DirtySymbol = 'auto'
+    AdminSymbol = 'auto'
+    TimeSymbol = 'auto'
+    AdminForeground = 'Yellow'
+    AdminBackground = 'Black'
+    PathForeground = 'White'
+    PathBackground = 'Magenta'
+    GitForeground = 'Black'
+    GitBackground = 'Green'
+    TimeForeground = 'Black'
+    TimeBackground = 'Yellow'
+    KeyBindingPreset = 'zsh'
+    EnableInCodex = $true
+    EnableInVSCode = $true
+    EnableInWindowsTerminal = $true
+    EnableInPlainConsole = $true
     AsciiMode = $false
     TransientPrompt = $false
 }
@@ -88,13 +110,38 @@ Set `PathDisplayMode` to `full`, `compact`, or `auto`. `auto` keeps short paths 
 
 Set `PromptLayout` to `single`, `two-line`, or `auto`. `single` keeps the command on the same line. `two-line` moves command entry to a new prompt line. `auto` switches to two-line layout when the visible prompt text is long.
 
+Set `CommandDurationThresholdMilliseconds` to show a duration segment after commands that run at or above the threshold. The default is 2000 milliseconds.
+
+Set `TransientPrompt = $true` to ask PSReadLine to rewrite previous prompts to the compact prompt marker when supported by the host. CleanCli preserves and restores the original PSReadLine prompt settings on disable.
+
+Set `RightPrompt = $true` to render git and command duration segments on the right side of ANSI-capable terminals. CleanCli falls back to the normal left prompt when color is disabled or cursor positioning is unavailable.
+
+Set prompt symbol options such as `PathSymbol`, `GitSymbol`, `DirtySymbol`, `AdminSymbol`, `TimeSymbol`, and `PromptSeparator` to override built-in glyphs without downloading themes. Leave them as `auto` to use Powerline glyphs or ASCII fallbacks based on `AsciiMode`.
+
+Set segment color options such as `PathForeground`, `PathBackground`, `GitForeground`, `GitBackground`, `TimeForeground`, `TimeBackground`, `AdminForeground`, and `AdminBackground` to one of `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, or `Default`.
+
+## Directory Icons
+
+CleanCli can render optional file and folder icons for directory listings without downloading themes or metadata. The default `IconMode = 'disabled'` keeps normal `Get-ChildItem` output.
+
+Use `Get-CleanCliChildItem` for icon-aware directory listings. Set `IconMode` to `native` for CleanCli's offline glyph map, `terminal-icons` to delegate to the installed `Terminal-Icons` module when available, or `ascii` for `[D]` and `[F]` markers. If `IconMode = 'native'` and ASCII mode is enabled, CleanCli uses ASCII-safe icons.
+
+The bundled profile imports `Terminal-Icons` with `-ErrorAction SilentlyContinue` so normal `Get-ChildItem`, `ls`, and `dir` output can show glyphs when the local module is installed. CleanCli still works without that module.
+
 ## Key Bindings
 
 - `Tab`: menu completion
 - `RightArrow`: accept inline prediction
 - `Ctrl+r`: reverse history search
+- `UpArrow` / `DownArrow`: substring history search in the default `zsh` preset
 
 Inline predictions use PSReadLine history only. No plugin, package install, schema download, icon download, or remote metadata check is used.
+
+Set `KeyBindingPreset` to `zsh`, `powershell`, or `minimal`. `zsh` enables menu completion, substring history search, reverse search, and right-arrow suggestion acceptance. `powershell` leaves PSReadLine navigation bindings alone. `minimal` only tunes Tab completion.
+
+Use `Set-CleanCliLocation` for directory jumping. It records visited directories in a persistent local history file and accepts fuzzy history matches after a location has been visited. Use `Get-CleanCliLocationHistory` to inspect that history.
+
+The old profile helpers now live as module commands: `Show-CleanCliGitLog` for the decorated git log and `Open-CleanCliExplorer` for opening Explorer at a path.
 
 ## Git Behavior
 
@@ -122,6 +169,17 @@ Measure-CleanCliStartup
 ```
 
 `Get-CleanCliStatus` includes `LastGitDurationMilliseconds` so slow repositories can be identified from the last bounded git call. `LastGit` includes the repo root, git dir, cache key, exact git arguments, suppression count and threshold, data source (`none`, `branch-only`, `full`, `cached`, `last-successful`, or `suppressed`), and the parsed status counters (`Added`, `Modified`, `Deleted`, `Moved`, `Unmerged`, `Untracked`, and `StatusSummary`).
+
+`Measure-CleanCliStartup` reports separate timings for the no-profile baseline, CleanCli import, CleanCli enable, Terminal-Icons import, CleanCli plus Terminal-Icons, normal profile load, and forced profile load. Use those fields to attribute startup regressions to CleanCli or optional icon loading.
+
+`Get-CleanCliStatus` also reports `HostName`, `LoadStatus`, and `LoadReason` so profile diagnostics can explain whether CleanCli loaded or skipped initialization. Set `EnableInCodex`, `EnableInVSCode`, `EnableInWindowsTerminal`, or `EnableInPlainConsole` to `$false` to skip prompt initialization for that host.
+
+Install or update the module without network access:
+
+```powershell
+Import-Module .\src\CleanCli\CleanCli.psd1 -Force
+Install-CleanCli
+```
 
 Run tests:
 

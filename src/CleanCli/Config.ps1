@@ -35,6 +35,10 @@ function Find-CleanCliConfigFile {
 }
 
 function Get-CleanCliUserConfigPath {
+    if ($script:CleanCliUserConfigPathOverride) {
+        return $script:CleanCliUserConfigPathOverride
+    }
+
     $documentsPath = [Environment]::GetFolderPath('MyDocuments')
     if (-not $documentsPath) {
         $documentsPath = [Environment]::GetFolderPath('UserProfile')
@@ -95,6 +99,35 @@ function ConvertTo-CleanCliOptionValue {
             }
             return $mode
         }
+        'IconMode' {
+            $mode = [string]$Value
+            if ($mode -notin @('disabled', 'native', 'terminal-icons', 'ascii')) {
+                throw "IconMode must be one of: disabled, native, terminal-icons, ascii."
+            }
+            return $mode
+        }
+        'CommandDurationThresholdMilliseconds' { return [int]$Value }
+        'RightPrompt' { return [bool]$Value }
+        { $_ -in @('PromptSeparator', 'PathSymbol', 'GitSymbol', 'DirtySymbol', 'AdminSymbol', 'TimeSymbol') } {
+            return [string]$Value
+        }
+        { $_ -in @('AdminForeground', 'AdminBackground', 'PathForeground', 'PathBackground', 'GitForeground', 'GitBackground', 'TimeForeground', 'TimeBackground') } {
+            $color = [string]$Value
+            if ($color -notin @('Black', 'Red', 'Green', 'Yellow', 'Blue', 'Magenta', 'Cyan', 'White', 'DarkGray', 'Default')) {
+                throw "$Name must be one of: Black, Red, Green, Yellow, Blue, Magenta, Cyan, White, DarkGray, Default."
+            }
+            return $color
+        }
+        'KeyBindingPreset' {
+            $preset = [string]$Value
+            if ($preset -notin @('zsh', 'powershell', 'minimal')) {
+                throw "KeyBindingPreset must be one of: zsh, powershell, minimal."
+            }
+            return $preset
+        }
+        { $_ -in @('EnableInCodex', 'EnableInVSCode', 'EnableInWindowsTerminal', 'EnableInPlainConsole') } {
+            return [bool]$Value
+        }
         'AsciiMode' { return [bool]$Value }
         'TransientPrompt' { return [bool]$Value }
     }
@@ -127,6 +160,10 @@ function Initialize-CleanCliOptions {
     }
     if (-not $configPath) {
         $configPath = Get-CleanCliUserConfigPath
+        if (Test-Path -LiteralPath $configPath) {
+            $loaded = Import-PowerShellDataFile -LiteralPath $configPath
+            $options = Merge-CleanCliOptions -BaseOptions $options -Overrides $loaded
+        }
     }
 
     if ($env:CLEANCLI_ASCII -eq '1') {

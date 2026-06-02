@@ -15,13 +15,7 @@ if ($env:TERM_PROGRAM -eq 'vscode') {
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-function log([string] $path) {
-    git log --graph --decorate --stat --pretty=format:"%C(auto)%h %d %s%n%C(green)%ad %C(blue)%an%n" --date=short $path
-}
-
-function e {
-    explorer .
-}
+Import-Module Terminal-Icons -ErrorAction SilentlyContinue
 
 $cleanCliModule = Join-Path (Split-Path -Path $PSScriptRoot -Parent) 'src\CleanCli\CleanCli.psd1'
 if (Test-Path -LiteralPath $cleanCliModule) {

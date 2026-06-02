@@ -13,7 +13,13 @@
         'Get-CleanCliStatus',
         'Measure-CleanCliStartup',
         'Get-CleanCliOption',
-        'Set-CleanCliOption'
+        'Set-CleanCliOption',
+        'Get-CleanCliChildItem',
+        'Set-CleanCliLocation',
+        'Get-CleanCliLocationHistory',
+        'Open-CleanCliExplorer',
+        'Show-CleanCliGitLog',
+        'Install-CleanCli'
     )
     CmdletsToExport = @()
     VariablesToExport = @()

@@ -9,9 +9,14 @@ Describe 'CleanCli profile bootstrap' {
         $profileText = Get-Content -LiteralPath $ProfilePath -Raw
 
         $profileText | Should Not Match 'import-module\s+posh-git'
-        $profileText | Should Not Match 'import-module\s+-?name\s+terminal-icons'
         $profileText | Should Not Match 'import-module\s+mklink'
         $profileText | Should Not Match 'oh-my-posh'
+    }
+
+    It 'loads Terminal-Icons from the local module path when available' {
+        $profileText = Get-Content -LiteralPath $ProfilePath -Raw
+
+        $profileText | Should Match 'Import-Module Terminal-Icons -ErrorAction SilentlyContinue'
     }
 
     It 'contains a CleanCli disable gate' {
@@ -19,6 +24,13 @@ Describe 'CleanCli profile bootstrap' {
 
         $profileText | Should Match 'CLEANCLI_DISABLE'
         $profileText | Should Match 'Enable-CleanCli'
+    }
+
+    It 'does not define legacy helper functions outside the module' {
+        $profileText = Get-Content -LiteralPath $ProfilePath -Raw
+
+        $profileText | Should Not Match 'function\s+log\b'
+        $profileText | Should Not Match 'function\s+e\b'
     }
 }
 
@@ -45,21 +57,62 @@ Describe 'CleanCli module behavior' {
         ($commands -contains 'Measure-CleanCliStartup') | Should Be $true
         ($commands -contains 'Get-CleanCliOption') | Should Be $true
         ($commands -contains 'Set-CleanCliOption') | Should Be $true
+        ($commands -contains 'Get-CleanCliChildItem') | Should Be $true
+        ($commands -contains 'Set-CleanCliLocation') | Should Be $true
+        ($commands -contains 'Get-CleanCliLocationHistory') | Should Be $true
+        ($commands -contains 'Open-CleanCliExplorer') | Should Be $true
+        ($commands -contains 'Show-CleanCliGitLog') | Should Be $true
+        ($commands -contains 'Install-CleanCli') | Should Be $true
     }
 
     It 'returns default CleanCli options' {
-        $options = Get-CleanCliOption
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
-        $options.GitTimeoutMilliseconds | Should Be 1000
-        $options.GitCacheMilliseconds | Should Be 750
-        $options.GitUntrackedMode | Should Be 'normal'
-        $options.GitIgnoreSubmodules | Should Be 'none'
-        $options.GitStatusMode | Should Be 'full'
-        $options.GitDivergenceMode | Should Be 'none'
-        $options.PathDisplayMode | Should Be 'auto'
-        $options.PromptLayout | Should Be 'single'
-        $options.AsciiMode | Should Be $false
-        $options.TransientPrompt | Should Be $false
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'missing.config.psd1'
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+            }
+            $options = Get-CleanCliOption
+
+            $options.GitTimeoutMilliseconds | Should Be 1000
+            $options.GitCacheMilliseconds | Should Be 750
+            $options.GitUntrackedMode | Should Be 'normal'
+            $options.GitIgnoreSubmodules | Should Be 'none'
+            $options.GitStatusMode | Should Be 'full'
+            $options.GitDivergenceMode | Should Be 'none'
+            $options.PathDisplayMode | Should Be 'auto'
+            $options.PromptLayout | Should Be 'single'
+            $options.IconMode | Should Be 'disabled'
+            $options.CommandDurationThresholdMilliseconds | Should Be 2000
+            $options.RightPrompt | Should Be $false
+            $options.PromptSeparator | Should Be 'auto'
+            $options.PathSymbol | Should Be 'auto'
+            $options.GitSymbol | Should Be 'auto'
+            $options.DirtySymbol | Should Be 'auto'
+            $options.AdminSymbol | Should Be 'auto'
+            $options.TimeSymbol | Should Be 'auto'
+            $options.AdminForeground | Should Be 'Yellow'
+            $options.AdminBackground | Should Be 'Black'
+            $options.PathForeground | Should Be 'White'
+            $options.PathBackground | Should Be 'Magenta'
+            $options.GitForeground | Should Be 'Black'
+            $options.GitBackground | Should Be 'Green'
+            $options.TimeForeground | Should Be 'Black'
+            $options.TimeBackground | Should Be 'Yellow'
+            $options.KeyBindingPreset | Should Be 'zsh'
+            $options.EnableInCodex | Should Be $true
+            $options.EnableInVSCode | Should Be $true
+            $options.EnableInWindowsTerminal | Should Be $true
+            $options.EnableInPlainConsole | Should Be $true
+            $options.AsciiMode | Should Be $false
+            $options.TransientPrompt | Should Be $false
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
     }
 
     It 'sets and returns a CleanCli option' {
@@ -119,6 +172,37 @@ Describe 'CleanCli module behavior' {
         }
         finally {
             Remove-Item Env:\CLEANCLI_TEST_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'loads the user CleanCli config when no project config exists' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $documentsRoot = Join-Path $tempRoot 'Documents'
+        $configRoot = Join-Path $documentsRoot 'PowerShell'
+        $startPath = Join-Path $tempRoot 'NoProjectConfig'
+        New-Item -ItemType Directory -Path $configRoot | Out-Null
+        New-Item -ItemType Directory -Path $startPath | Out-Null
+        Set-Content -LiteralPath (Join-Path $configRoot 'CleanCli.config.psd1') -Value "@{ IconMode = 'terminal-icons' }" -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_TEST_USER_CONFIG_PATH = Join-Path $configRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_START_PATH = $startPath
+            InModuleScope CleanCli {
+                $script:CleanCliUserConfigPathOverride = $env:CLEANCLI_TEST_USER_CONFIG_PATH
+                try {
+                    $loaded = Initialize-CleanCliOptions -StartPath $env:CLEANCLI_TEST_START_PATH
+
+                    $loaded.IconMode | Should Be 'terminal-icons'
+                }
+                finally {
+                    $script:CleanCliUserConfigPathOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_TEST_USER_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_START_PATH -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
@@ -677,6 +761,171 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'formats command durations compactly' {
+        InModuleScope CleanCli {
+            Format-CleanCliCommandDuration -Milliseconds 1500 | Should Be '1.5s'
+            Format-CleanCliCommandDuration -Milliseconds 65000 | Should Be '1m 5s'
+            Format-CleanCliCommandDuration -Milliseconds 3723000 | Should Be '1h 2m'
+        }
+    }
+
+    It 'does not render command duration below the configured threshold' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name CommandDurationThresholdMilliseconds -Value 2000 | Out-Null
+                $script:CleanCliCommandDurationProvider = { 1500 }
+                $script:CleanCliGitCommand = {
+                    throw 'prompt test should not invoke git outside a repository'
+                }
+                Push-Location $env:TEMP
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+
+                    $promptText | Should Not Match '1\.5s'
+                }
+                finally {
+                    Pop-Location
+                    $script:CleanCliCommandDurationProvider = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders command duration when it meets the configured threshold' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name CommandDurationThresholdMilliseconds -Value 1000 | Out-Null
+                $script:CleanCliCommandDurationProvider = { 1500 }
+                $script:CleanCliGitCommand = {
+                    throw 'prompt test should not invoke git outside a repository'
+                }
+                Push-Location $env:TEMP
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+
+                    $promptText | Should Match 'time: 1\.5s'
+                }
+                finally {
+                    Pop-Location
+                    $script:CleanCliCommandDurationProvider = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'formats a right prompt with ANSI cursor positioning' {
+        InModuleScope CleanCli {
+            $escape = [char]27
+            $right = Format-CleanCliRightPrompt -LeftText 'left ' -RightText 'right' -Width 20
+
+            $right | Should Be "$escape[s$escape[16Gright$escape[u"
+        }
+    }
+
+    It 'renders git status on the right when right prompt is enabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $gitDir = Join-Path $tempRoot '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = $null
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name RightPrompt -Value $true | Out-Null
+                $script:CleanCliGitCommand = {
+                    ''
+                }
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+                    $escape = [char]27
+
+                    $promptText | Should Match ([regex]::Escape("$escape[s"))
+                    $promptText | Should Match 'git: main'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'keeps git status on the left when right prompt is enabled but color is disabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $gitDir = Join-Path $tempRoot '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = '1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name RightPrompt -Value $true | Out-Null
+                $script:CleanCliGitCommand = {
+                    ''
+                }
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+                    $escape = [char]27
+
+                    $promptText | Should Not Match ([regex]::Escape("$escape[s"))
+                    $promptText | Should Match 'git: main'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'compacts long home paths while preserving root and leaf context' {
         InModuleScope CleanCli {
             $home = [Environment]::GetFolderPath('UserProfile')
@@ -825,6 +1074,457 @@ Describe 'CleanCli module behavior' {
         }
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'uses configured prompt symbol overrides' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name AsciiMode -Value $true | Out-Null
+                Set-CleanCliOption -Name PromptSeparator -Value '|' | Out-Null
+                Set-CleanCliOption -Name PathSymbol -Value 'cwd:' | Out-Null
+                Set-CleanCliOption -Name GitSymbol -Value 'branch:' | Out-Null
+                Set-CleanCliOption -Name DirtySymbol -Value 'dirty' | Out-Null
+                Set-CleanCliOption -Name AdminSymbol -Value 'root' | Out-Null
+                Set-CleanCliOption -Name TimeSymbol -Value 't:' | Out-Null
+
+                $symbols = Get-CleanCliSymbols
+
+                $symbols.Separator | Should Be '|'
+                $symbols.Path | Should Be 'cwd:'
+                $symbols.Branch | Should Be 'branch:'
+                $symbols.Dirty | Should Be 'dirty'
+                $symbols.Admin | Should Be 'root'
+                $symbols.Time | Should Be 't:'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'uses configured prompt segment colors' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = $null
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name PathForeground -Value Black | Out-Null
+                Set-CleanCliOption -Name PathBackground -Value Cyan | Out-Null
+                $script:CleanCliGitCommand = {
+                    throw 'prompt test should not invoke git outside a repository'
+                }
+                Push-Location $env:TEMP
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+                    $escape = [char]27
+
+                    $promptText | Should Match ([regex]::Escape("$escape[30;46m"))
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'maps configurable prompt colors to ANSI foreground and background codes' {
+        InModuleScope CleanCli {
+            Get-CleanCliAnsiCode -Color Default | Should Be 39
+            Get-CleanCliAnsiCode -Color DarkGray | Should Be 90
+            Get-CleanCliAnsiCode -Color White -Background | Should Be 47
+            Get-CleanCliAnsiCode -Color Default -Background | Should Be 49
+        }
+    }
+
+    It 'builds the admin indicator from configured text and colors' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name AdminSymbol -Value elevated | Out-Null
+                Set-CleanCliOption -Name AdminForeground -Value Red | Out-Null
+                Set-CleanCliOption -Name AdminBackground -Value Yellow | Out-Null
+
+                $segment = New-CleanCliAdminSegment
+
+                $segment.Text | Should Be 'elevated'
+                $segment.Foreground | Should Be 'Red'
+                $segment.Background | Should Be 'Yellow'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'defines zsh-like key bindings with substring history search and menu completion' {
+        InModuleScope CleanCli {
+            $bindings = Get-CleanCliKeyBindingsForPreset -Preset zsh
+
+            ($bindings | Where-Object { $_.Key -eq 'Tab' }).Function | Should Be 'MenuComplete'
+            ($bindings | Where-Object { $_.Key -eq 'UpArrow' }).Function | Should Be 'HistorySearchBackward'
+            ($bindings | Where-Object { $_.Key -eq 'DownArrow' }).Function | Should Be 'HistorySearchForward'
+            ($bindings | Where-Object { $_.Key -eq 'RightArrow' }).Function | Should Be 'AcceptSuggestion'
+        }
+    }
+
+    It 'defines minimal key bindings without overriding navigation keys' {
+        InModuleScope CleanCli {
+            $bindings = Get-CleanCliKeyBindingsForPreset -Preset minimal
+
+            ($bindings | Where-Object { $_.Key -eq 'UpArrow' }) | Should Be $null
+            ($bindings | Where-Object { $_.Key -eq 'DownArrow' }) | Should Be $null
+            ($bindings | Where-Object { $_.Key -eq 'Tab' }).Function | Should Be 'MenuComplete'
+        }
+    }
+
+    It 'records and reuses persistent location history for fuzzy directory jumping' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $projectPath = Join-Path $tempRoot 'alpha-project'
+        $otherPath = Join-Path $tempRoot 'other'
+        New-Item -ItemType Directory -Path $projectPath | Out-Null
+        New-Item -ItemType Directory -Path $otherPath | Out-Null
+
+        try {
+            $env:CLEANCLI_LOCATION_HISTORY_PATH = Join-Path $tempRoot 'locations.json'
+            Push-Location $otherPath
+            try {
+                Set-CleanCliLocation -Path $projectPath
+                Set-CleanCliLocation -Path $otherPath
+                Set-CleanCliLocation -Path alpha
+
+                (Get-Location).ProviderPath | Should Be $projectPath
+                (Get-CleanCliLocationHistory | Select-Object -First 1).Path | Should Be $projectPath
+            }
+            finally {
+                Pop-Location
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_LOCATION_HISTORY_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'detects the current host for per-host toggles' {
+        InModuleScope CleanCli {
+            $oldCodex = $env:CODEX_THREAD_ID
+            $oldTermProgram = $env:TERM_PROGRAM
+            $oldWtSession = $env:WT_SESSION
+            try {
+                $env:CODEX_THREAD_ID = 'test'
+                Get-CleanCliHostName | Should Be 'Codex'
+
+                Remove-Item Env:\CODEX_THREAD_ID -ErrorAction SilentlyContinue
+                $env:TERM_PROGRAM = 'vscode'
+                Get-CleanCliHostName | Should Be 'VSCode'
+
+                Remove-Item Env:\TERM_PROGRAM -ErrorAction SilentlyContinue
+                $env:WT_SESSION = 'test'
+                Get-CleanCliHostName | Should Be 'WindowsTerminal'
+
+                Remove-Item Env:\WT_SESSION -ErrorAction SilentlyContinue
+                Get-CleanCliHostName | Should Be 'PlainConsole'
+            }
+            finally {
+                if ($null -eq $oldCodex) { Remove-Item Env:\CODEX_THREAD_ID -ErrorAction SilentlyContinue } else { $env:CODEX_THREAD_ID = $oldCodex }
+                if ($null -eq $oldTermProgram) { Remove-Item Env:\TERM_PROGRAM -ErrorAction SilentlyContinue } else { $env:TERM_PROGRAM = $oldTermProgram }
+                if ($null -eq $oldWtSession) { Remove-Item Env:\WT_SESSION -ErrorAction SilentlyContinue } else { $env:WT_SESSION = $oldWtSession }
+            }
+        }
+    }
+
+    It 'skips initialization when the current host is disabled and reports why' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CODEX_THREAD_ID = 'test'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name EnableInCodex -Value $false | Out-Null
+
+                Enable-CleanCli
+                $status = Get-CleanCliStatus
+
+                $status.Enabled | Should Be $false
+                $status.HostName | Should Be 'Codex'
+                $status.LoadStatus | Should Be 'skipped'
+                $status.LoadReason | Should Match 'disabled'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CODEX_THREAD_ID -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'installs the module to a local destination without network access' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $destination = Join-Path $tempRoot 'CleanCli'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            Install-CleanCli -Destination $destination | Out-Null
+
+            Test-Path -LiteralPath (Join-Path $destination 'CleanCli.psd1') | Should Be $true
+            Test-Path -LiteralPath (Join-Path $destination 'CleanCli.psm1') | Should Be $true
+        }
+        finally {
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'reports startup timing by CleanCli and Terminal-Icons layer' {
+        $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $pwsh) {
+            Set-ItResult -Skipped -Because 'pwsh is not available.'
+            return
+        }
+
+        $timing = Measure-CleanCliStartup -PowerShellPath $pwsh
+
+        $timing.NoProfileMilliseconds | Should Not Be $null
+        $timing.CleanCliImportMilliseconds | Should Not Be $null
+        $timing.CleanCliEnableMilliseconds | Should Not Be $null
+        $timing.TerminalIconsImportMilliseconds | Should Not Be $null
+        $timing.CleanCliWithTerminalIconsMilliseconds | Should Not Be $null
+        $timing.ForcedProfileLoadMilliseconds | Should Not Be $null
+    }
+
+    It 'configures PSReadLine prompt text when transient prompt is enabled' {
+        if (-not (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue)) {
+            Set-ItResult -Skipped -Because 'PSReadLine is not available in this host.'
+            return
+        }
+
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $originalPromptText = (Get-PSReadLineOption).PromptText
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name TransientPrompt -Value $true | Out-Null
+                Set-CleanCliPSReadLine
+            }
+
+            ((Get-PSReadLineOption).PromptText -join '') | Should Be '> '
+        }
+        finally {
+            InModuleScope CleanCli {
+                Restore-CleanCliPSReadLine
+            }
+            if ($null -eq $originalPromptText) {
+                Set-PSReadLineOption -PromptText ''
+            }
+            else {
+                Set-PSReadLineOption -PromptText $originalPromptText
+            }
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'restores PSReadLine prompt text after transient prompt is disabled' {
+        if (-not (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue)) {
+            Set-ItResult -Skipped -Because 'PSReadLine is not available in this host.'
+            return
+        }
+
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $originalPromptText = (Get-PSReadLineOption).PromptText
+
+        try {
+            Set-PSReadLineOption -PromptText 'original> '
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name TransientPrompt -Value $true | Out-Null
+                Set-CleanCliPSReadLine
+                Restore-CleanCliPSReadLine
+            }
+
+            ((Get-PSReadLineOption).PromptText -join '') | Should Be 'original> '
+        }
+        finally {
+            if ($null -eq $originalPromptText) {
+                Set-PSReadLineOption -PromptText ''
+            }
+            else {
+                Set-PSReadLineOption -PromptText $originalPromptText
+            }
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders native offline icons for directory listings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'src') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH |
+                    Where-Object { $_.Name -in @('src', 'README.md') }
+
+                $folder = $items | Where-Object Name -eq 'src'
+                $markdown = $items | Where-Object Name -eq 'README.md'
+
+                $folder.Icon | Should Not Be ''
+                $markdown.Icon | Should Not Be ''
+                $folder.DisplayName | Should Match 'src$'
+                $markdown.DisplayName | Should Match 'README.md$'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders ASCII-safe icons for directory listings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'src') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value ascii | Out-Null
+
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH |
+                    Where-Object { $_.Name -in @('src', 'README.md') }
+
+                ($items | Where-Object Name -eq 'src').Icon | Should Be '[D]'
+                ($items | Where-Object Name -eq 'README.md').Icon | Should Be '[F]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'delegates directory listings to Terminal-Icons when compatibility mode is selected and installed' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value terminal-icons | Out-Null
+                function script:Format-TerminalIcons {
+                    process {
+                        [pscustomobject]@{
+                            Delegated = $true
+                            Name = $_.Name
+                        }
+                    }
+                }
+
+                $items = Get-CleanCliChildItem -Path $env:TEMP
+
+                ($items | Select-Object -First 1).Delegated | Should Be $true
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does not run directory listing code during prompt rendering when icon mode is enabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                $script:CleanCliGitCommand = {
+                    throw 'prompt test should not invoke git outside a repository'
+                }
+                function script:Get-ChildItem {
+                    throw 'prompt rendering should not list directory items'
+                }
+                Push-Location $env:TEMP
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+
+                    $promptText | Should Not Match '\[D\]|\[F\]'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'loads a non-interactive profile when icon mode is configured' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $configPath = Join-Path $tempRoot 'CleanCli.config.psd1'
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath $configPath -Value "@{ IconMode = 'native' }" -Encoding ASCII
+
+        try {
+            $command = "`$env:CLEANCLI_CONFIG_PATH = '$configPath'; `$env:CLEANCLI_INTERACTIVE_ONLY = '0'; . '$ProfilePath'; 'loaded'"
+            $output = @(pwsh -NoProfile -NonInteractive -Command $command)
+
+            $LASTEXITCODE | Should Be 0
+            ($output -contains 'loaded') | Should Be $true
+        }
+        finally {
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
