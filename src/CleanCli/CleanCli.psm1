@@ -27,6 +27,8 @@ $script:CleanCliDefaultOptions = [ordered]@{
     GitIgnoreSubmodules = 'none'
     GitStatusMode = 'full'
     GitDivergenceMode = 'none'
+    PathDisplayMode = 'auto'
+    PromptLayout = 'single'
     AsciiMode = $false
     TransientPrompt = $false
 }

@@ -81,6 +81,20 @@ function ConvertTo-CleanCliOptionValue {
             }
             return $mode
         }
+        'PathDisplayMode' {
+            $mode = [string]$Value
+            if ($mode -notin @('full', 'compact', 'auto')) {
+                throw "PathDisplayMode must be one of: full, compact, auto."
+            }
+            return $mode
+        }
+        'PromptLayout' {
+            $mode = [string]$Value
+            if ($mode -notin @('single', 'two-line', 'auto')) {
+                throw "PromptLayout must be one of: single, two-line, auto."
+            }
+            return $mode
+        }
         'AsciiMode' { return [bool]$Value }
         'TransientPrompt' { return [bool]$Value }
     }

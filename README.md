@@ -58,6 +58,8 @@ Example:
     GitIgnoreSubmodules = 'none'
     GitStatusMode = 'full'
     GitDivergenceMode = 'none'
+    PathDisplayMode = 'auto'
+    PromptLayout = 'single'
     AsciiMode = $false
     TransientPrompt = $false
 }
@@ -78,6 +80,14 @@ Environment variables still override config for existing compatibility:
 - `CLEANCLI_ASCII=1`
 - `CLEANCLI_TRANSIENT=1`
 
+## Prompt Display
+
+CleanCli renders Powerline-style segments with bridge separators. The separator foreground uses the previous segment background and the separator background uses the next segment background, so path and git blocks connect cleanly when the terminal font supports Powerline glyphs.
+
+Set `PathDisplayMode` to `full`, `compact`, or `auto`. `auto` keeps short paths unchanged and compacts long paths to root plus useful leaf context, for example `~\AppData\...\blob_storage\09064e10...`.
+
+Set `PromptLayout` to `single`, `two-line`, or `auto`. `single` keeps the command on the same line. `two-line` moves command entry to a new prompt line. `auto` switches to two-line layout when the visible prompt text is long.
+
 ## Key Bindings
 
 - `Tab`: menu completion
@@ -91,6 +101,8 @@ Inline predictions use PSReadLine history only. No plugin, package install, sche
 CleanCLI walks parent directories looking for `.git`. Outside a repository it returns immediately and does not start `git.exe`.
 
 Inside a repository it parses `.git\HEAD` directly for the branch. Dirty, staged, unstaged, and untracked counts come from a timeout-bounded local `git --no-optional-locks -c core.quotepath=false -c color.status=false status --porcelain=v1 --untracked-files=normal --ignore-submodules=none` call. This lets git apply its index and ignore rules instead of making CleanCli crawl the tree itself.
+
+Dirty prompts render an Oh My Posh-style status breakdown instead of one combined count. The default order is untracked `?`, added `+`, modified `~`, deleted `-`, moved `>`, and unmerged `x`, for example `* ?3 +1 ~4 -2`.
 
 Set `GitUntrackedMode` to `no`, `normal`, or `all` to control `--untracked-files`. Set `GitIgnoreSubmodules` to `none`, `untracked`, `dirty`, or `all` to control `--ignore-submodules`.
 
@@ -109,7 +121,7 @@ Get-CleanCliStatus
 Measure-CleanCliStartup
 ```
 
-`Get-CleanCliStatus` includes `LastGitDurationMilliseconds` so slow repositories can be identified from the last bounded git call. `LastGit` includes the repo root, git dir, cache key, exact git arguments, suppression count and threshold, and data source (`none`, `branch-only`, `full`, `cached`, `last-successful`, or `suppressed`).
+`Get-CleanCliStatus` includes `LastGitDurationMilliseconds` so slow repositories can be identified from the last bounded git call. `LastGit` includes the repo root, git dir, cache key, exact git arguments, suppression count and threshold, data source (`none`, `branch-only`, `full`, `cached`, `last-successful`, or `suppressed`), and the parsed status counters (`Added`, `Modified`, `Deleted`, `Moved`, `Unmerged`, `Untracked`, and `StatusSummary`).
 
 Run tests:
 

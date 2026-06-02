@@ -145,6 +145,24 @@ function Get-CleanCliGitLastSuccessfulKey {
     '{0}|{1}|{2}' -f $Repository.Root, $script:CleanCliOptions.GitUntrackedMode, $script:CleanCliOptions.GitIgnoreSubmodules
 }
 
+function Get-CleanCliObjectValue {
+    param(
+        [object]$Object,
+        [string]$Name,
+        [object]$DefaultValue = 0
+    )
+
+    if ($Object -and ($Object.PSObject.Properties.Name -contains $Name)) {
+        return $Object.$Name
+    }
+
+    if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($Name)) {
+        return $Object[$Name]
+    }
+
+    $DefaultValue
+}
+
 function Set-CleanCliGitLastSuccessfulInfo {
     param(
         [object]$Repository,
@@ -179,6 +197,16 @@ function Copy-CleanCliGitInfoForFallback {
         Working = $Info.Working
         Staged = $Info.Staged
         Untracked = $Info.Untracked
+        Added = Get-CleanCliObjectValue -Object $Info -Name Added
+        Modified = Get-CleanCliObjectValue -Object $Info -Name Modified
+        Deleted = Get-CleanCliObjectValue -Object $Info -Name Deleted
+        Moved = Get-CleanCliObjectValue -Object $Info -Name Moved
+        Unmerged = Get-CleanCliObjectValue -Object $Info -Name Unmerged
+        Conflicted = Get-CleanCliObjectValue -Object $Info -Name Conflicted
+        Missing = Get-CleanCliObjectValue -Object $Info -Name Missing
+        Clean = Get-CleanCliObjectValue -Object $Info -Name Clean
+        Ignored = Get-CleanCliObjectValue -Object $Info -Name Ignored
+        StatusSummary = Get-CleanCliObjectValue -Object $Info -Name StatusSummary -DefaultValue ''
         GitInvoked = $GitInvoked
         TimedOut = $TimedOut
         GitSuppressed = $GitSuppressed
@@ -211,6 +239,16 @@ function Copy-CleanCliGitInfoWithDataSource {
         Working = $Info.Working
         Staged = $Info.Staged
         Untracked = $Info.Untracked
+        Added = Get-CleanCliObjectValue -Object $Info -Name Added
+        Modified = Get-CleanCliObjectValue -Object $Info -Name Modified
+        Deleted = Get-CleanCliObjectValue -Object $Info -Name Deleted
+        Moved = Get-CleanCliObjectValue -Object $Info -Name Moved
+        Unmerged = Get-CleanCliObjectValue -Object $Info -Name Unmerged
+        Conflicted = Get-CleanCliObjectValue -Object $Info -Name Conflicted
+        Missing = Get-CleanCliObjectValue -Object $Info -Name Missing
+        Clean = Get-CleanCliObjectValue -Object $Info -Name Clean
+        Ignored = Get-CleanCliObjectValue -Object $Info -Name Ignored
+        StatusSummary = Get-CleanCliObjectValue -Object $Info -Name StatusSummary -DefaultValue ''
         GitInvoked = $false
         TimedOut = $false
         GitSuppressed = $false
@@ -243,6 +281,16 @@ function New-CleanCliGitInfoFromStatusText {
         Working = $status.Working
         Staged = $status.Staged
         Untracked = $status.Untracked
+        Added = $status.Added
+        Modified = $status.Modified
+        Deleted = $status.Deleted
+        Moved = $status.Moved
+        Unmerged = $status.Unmerged
+        Conflicted = $status.Conflicted
+        Missing = $status.Missing
+        Clean = $status.Clean
+        Ignored = $status.Ignored
+        StatusSummary = $status.StatusSummary
         GitInvoked = $true
         TimedOut = $false
         GitSuppressed = $false
@@ -540,6 +588,16 @@ function Convert-CleanCliGitStatus {
         Working = 0
         Staged = 0
         Untracked = 0
+        Added = 0
+        Modified = 0
+        Deleted = 0
+        Moved = 0
+        Unmerged = 0
+        Conflicted = 0
+        Missing = 0
+        Clean = 0
+        Ignored = 0
+        StatusSummary = ''
     }
 
     if (-not $StatusText) {
@@ -568,8 +626,14 @@ function Convert-CleanCliGitStatus {
         $result.Dirty = $true
         if ($line.StartsWith('??')) {
             $result.Untracked++
+            $result['StatusSummary'] = Format-CleanCliScmStatusSummary -Status $result
             continue
         }
+
+        if ($line.Length -ge 2) {
+            Add-CleanCliGitStatusCodes -Status $result -IndexCode ([string]$line[0]) -WorkingCode ([string]$line[1])
+        }
+
         if ($line.Length -ge 1 -and $line[0] -ne ' ') {
             $result.Staged++
         }
@@ -578,7 +642,66 @@ function Convert-CleanCliGitStatus {
         }
     }
 
+    $result['StatusSummary'] = Format-CleanCliScmStatusSummary -Status $result
     [pscustomobject]$result
+}
+
+function Add-CleanCliGitStatusCodes {
+    param(
+        [object]$Status,
+        [string]$IndexCode,
+        [string]$WorkingCode
+    )
+
+    $combined = "$IndexCode$WorkingCode"
+    if ($combined -in @('DD', 'AU', 'UD', 'UA', 'DU', 'AA', 'UU')) {
+        $Status.Unmerged++
+        return
+    }
+
+    Add-CleanCliGitStatusCode -Status $Status -Code $IndexCode
+    Add-CleanCliGitStatusCode -Status $Status -Code $WorkingCode
+}
+
+function Add-CleanCliGitStatusCode {
+    param(
+        [object]$Status,
+        [string]$Code
+    )
+
+    switch ($Code) {
+        'A' { $Status.Added++ }
+        'M' { $Status.Modified++ }
+        'D' { $Status.Deleted++ }
+        'R' { $Status.Moved++ }
+        'C' { $Status.Moved++ }
+        'U' { $Status.Unmerged++ }
+    }
+}
+
+function Format-CleanCliScmStatusSummary {
+    param([object]$Status)
+
+    $parts = @()
+    foreach ($entry in @(
+        , @('Untracked', '?')
+        , @('Added', '+')
+        , @('Modified', '~')
+        , @('Deleted', '-')
+        , @('Moved', '>')
+        , @('Unmerged', 'x')
+        , @('Conflicted', '!')
+        , @('Missing', '!')
+        , @('Clean', '=')
+        , @('Ignored', 'Ø')
+    )) {
+        $value = Get-CleanCliObjectValue -Object $Status -Name $entry[0]
+        if ($value -gt 0) {
+            $parts += "$($entry[1])$value"
+        }
+    }
+
+    $parts -join ' '
 }
 
 function Get-CleanCliGitInfo {
@@ -605,6 +728,16 @@ function Get-CleanCliGitInfo {
             Working = 0
             Staged = 0
             Untracked = 0
+            Added = 0
+            Modified = 0
+            Deleted = 0
+            Moved = 0
+            Unmerged = 0
+            Conflicted = 0
+            Missing = 0
+            Clean = 0
+            Ignored = 0
+            StatusSummary = ''
             GitInvoked = $false
             TimedOut = $false
             GitSuppressed = $false
@@ -632,6 +765,16 @@ function Get-CleanCliGitInfo {
         Working = 0
         Staged = 0
         Untracked = 0
+        Added = 0
+        Modified = 0
+        Deleted = 0
+        Moved = 0
+        Unmerged = 0
+        Conflicted = 0
+        Missing = 0
+        Clean = 0
+        Ignored = 0
+        StatusSummary = ''
         GitInvoked = $false
         TimedOut = $false
         GitSuppressed = $false
@@ -702,6 +845,16 @@ function Get-CleanCliGitInfo {
             $info.Working = $status.Working
             $info.Staged = $status.Staged
             $info.Untracked = $status.Untracked
+            $info.Added = $status.Added
+            $info.Modified = $status.Modified
+            $info.Deleted = $status.Deleted
+            $info.Moved = $status.Moved
+            $info.Unmerged = $status.Unmerged
+            $info.Conflicted = $status.Conflicted
+            $info.Missing = $status.Missing
+            $info.Clean = $status.Clean
+            $info.Ignored = $status.Ignored
+            $info.StatusSummary = $status.StatusSummary
             Add-CleanCliGitDiagnostics -Info $info -Repository $repository -CacheKey $cacheKey -Arguments $statusArguments -DataSource 'full'
             Set-CleanCliGitLastSuccessfulInfo -Repository $repository -Info ([pscustomobject]$info)
         }

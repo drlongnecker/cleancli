@@ -56,6 +56,8 @@ Describe 'CleanCli module behavior' {
         $options.GitIgnoreSubmodules | Should Be 'none'
         $options.GitStatusMode | Should Be 'full'
         $options.GitDivergenceMode | Should Be 'none'
+        $options.PathDisplayMode | Should Be 'auto'
+        $options.PromptLayout | Should Be 'single'
         $options.AsciiMode | Should Be $false
         $options.TransientPrompt | Should Be $false
     }
@@ -444,6 +446,55 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'parses git status into Oh My Posh style change counters' {
+        InModuleScope CleanCli {
+            $status = Convert-CleanCliGitStatus -StatusText "?? untracked.txt`nA  staged-added.txt`n M working-modified.txt`nD  staged-deleted.txt`n D working-deleted.txt`nR  old.txt -> new.txt`nUU conflicted.txt"
+
+            $status.Untracked | Should Be 1
+            $status.Added | Should Be 1
+            $status.Modified | Should Be 1
+            $status.Deleted | Should Be 2
+            $status.Moved | Should Be 1
+            $status.Unmerged | Should Be 1
+            $status.StatusSummary | Should Be '?1 +1 ~1 -2 >1 x1'
+        }
+    }
+
+    It 'renders git prompt changes using Oh My Posh style status formatting' {
+        InModuleScope CleanCli {
+            $oldAscii = $env:CLEANCLI_ASCII
+            try {
+                $env:CLEANCLI_ASCII = '1'
+                $git = [pscustomobject]@{
+                    IsRepository = $true
+                    Branch = 'main'
+                    Dirty = $true
+                    Ahead = 0
+                    Behind = 0
+                    Working = 3
+                    Staged = 3
+                    Untracked = 1
+                    Added = 1
+                    Modified = 1
+                    Deleted = 2
+                    Moved = 1
+                    Unmerged = 1
+                    Conflicted = 0
+                    Missing = 0
+                    Clean = 0
+                    Ignored = 0
+                    StatusSummary = '?1 +1 ~1 -2 >1 x1'
+                    TimedOut = $false
+                }
+
+                Get-CleanCliGitPromptText -Git $git | Should Be 'git: main * ?1 +1 ~1 -2 >1 x1'
+            }
+            finally {
+                $env:CLEANCLI_ASCII = $oldAscii
+            }
+        }
+    }
+
     It 'uses branch-only mode without invoking git status' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         $gitDir = Join-Path $tempRoot '.git'
@@ -622,6 +673,115 @@ Describe 'CleanCli module behavior' {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
             Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
             Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'compacts long home paths while preserving root and leaf context' {
+        InModuleScope CleanCli {
+            $home = [Environment]::GetFolderPath('UserProfile')
+            $path = Join-Path $home 'AppData\Roaming\nocturnal-souls-launcher\blob_storage\09064e10-8a6c-4c30-972c-f8980ebcfe86'
+
+            $short = Get-CleanCliShortPath -Path $path
+
+            $short | Should Be '~\AppData\...\blob_storage\09064e10...'
+        }
+    }
+
+    It 'renders Powerline bridge separators with adjacent segment colors' {
+        InModuleScope CleanCli {
+            $oldNoColor = $env:NO_COLOR
+            $oldAscii = $env:CLEANCLI_ASCII
+            try {
+                $env:NO_COLOR = $null
+                $env:CLEANCLI_ASCII = $null
+                $script:CleanCliOptions.AsciiMode = $false
+                $segments = @(
+                    New-CleanCliSegment -Text 'dir: ~\src' -Foreground Black -Background Blue
+                    New-CleanCliSegment -Text 'git: main' -Foreground Black -Background Yellow
+                )
+
+                $promptText = Format-CleanCliPromptSegments -Segments $segments
+                $escape = [char]27
+
+                $promptText.Contains(('{0}[30;44m dir: ~\src {0}[0m' -f $escape)) | Should Be $true
+                $promptText.Contains(('{0}[34;43m{0}[0m' -f $escape)) | Should Be $true
+                $promptText.Contains(('{0}[30;43m git: main {0}[0m' -f $escape)) | Should Be $true
+                $promptText.Contains(('{0}[33;49m{0}[0m ' -f $escape)) | Should Be $true
+            }
+            finally {
+                $env:NO_COLOR = $oldNoColor
+                $env:CLEANCLI_ASCII = $oldAscii
+            }
+        }
+    }
+
+    It 'renders an explicit two-line prompt layout' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name PromptLayout -Value 'two-line' | Out-Null
+                $script:CleanCliGitCommand = {
+                    throw 'prompt test should not invoke git outside a repository'
+                }
+                Push-Location $env:TEMP
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+
+                    $promptText | Should Match "`n> $"
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'uses a two-line prompt automatically when the rendered prompt is long' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $longPath = Join-Path $tempRoot 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\cccccccccccccccccccccccccccccccccccccccc'
+        New-Item -ItemType Directory -Path $longPath | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_ASCII = '1'
+            $env:NO_COLOR = '1'
+            $env:CLEANCLI_TEST_LONG_PATH = $longPath
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name PromptLayout -Value 'auto' | Out-Null
+                Set-CleanCliOption -Name PathDisplayMode -Value 'full' | Out-Null
+                $script:CleanCliGitCommand = {
+                    ''
+                }
+                Push-Location $env:CLEANCLI_TEST_LONG_PATH
+                try {
+                    $promptText = Invoke-CleanCliPrompt
+
+                    $promptText | Should Match "`n> $"
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            Remove-Item Env:\NO_COLOR -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_LONG_PATH -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
