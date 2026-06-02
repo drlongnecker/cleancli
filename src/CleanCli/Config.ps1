@@ -258,6 +258,9 @@ function Set-CleanCliOption {
         $script:CleanCliGitCacheMilliseconds = $script:CleanCliOptions[$Name]
     }
     Save-CleanCliConfigFile
+    if ($Name -eq 'IconMode' -or $Name -eq 'AsciiMode') {
+        Set-CleanCliIconAliases
+    }
 
     [pscustomobject]$script:CleanCliOptions
 }

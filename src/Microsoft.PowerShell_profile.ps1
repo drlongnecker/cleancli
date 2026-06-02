@@ -15,8 +15,6 @@ if ($env:TERM_PROGRAM -eq 'vscode') {
 
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-Import-Module Terminal-Icons -ErrorAction SilentlyContinue
-
 $cleanCliModule = Join-Path (Split-Path -Path $PSScriptRoot -Parent) 'src\CleanCli\CleanCli.psd1'
 if (Test-Path -LiteralPath $cleanCliModule) {
     Import-Module $cleanCliModule -Force

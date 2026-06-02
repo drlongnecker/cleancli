@@ -13,10 +13,10 @@ Describe 'CleanCli profile bootstrap' {
         $profileText | Should Not Match 'oh-my-posh'
     }
 
-    It 'loads Terminal-Icons from the local module path when available' {
+    It 'does not import Terminal-Icons eagerly during profile startup' {
         $profileText = Get-Content -LiteralPath $ProfilePath -Raw
 
-        $profileText | Should Match 'Import-Module Terminal-Icons -ErrorAction SilentlyContinue'
+        $profileText | Should Not Match 'Import-Module\s+Terminal-Icons'
     }
 
     It 'contains a CleanCli disable gate' {
@@ -55,6 +55,7 @@ Describe 'CleanCli module behavior' {
         ($commands -contains 'Disable-CleanCli') | Should Be $true
         ($commands -contains 'Get-CleanCliStatus') | Should Be $true
         ($commands -contains 'Measure-CleanCliStartup') | Should Be $true
+        ($commands -contains 'Get-CleanCliIconDiagnostics') | Should Be $true
         ($commands -contains 'Get-CleanCliOption') | Should Be $true
         ($commands -contains 'Set-CleanCliOption') | Should Be $true
         ($commands -contains 'Get-CleanCliChildItem') | Should Be $true
@@ -1316,6 +1317,23 @@ Describe 'CleanCli module behavior' {
         $timing.ForcedProfileLoadMilliseconds | Should Not Be $null
     }
 
+    It 'reports repeated startup timing sample statistics' {
+        $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $pwsh) {
+            Set-ItResult -Skipped -Because 'pwsh is not available.'
+            return
+        }
+
+        $timing = Measure-CleanCliStartup -PowerShellPath $pwsh -Iterations 2
+
+        $timing.Iterations | Should Be 2
+        $timing.NoProfileMillisecondsMinimum | Should Not Be $null
+        $timing.NoProfileMillisecondsAverage | Should Not Be $null
+        $timing.NoProfileMillisecondsMaximum | Should Not Be $null
+        $timing.CleanCliEnableMillisecondsMinimum | Should Not Be $null
+        $timing.ForcedProfileLoadMillisecondsMaximum | Should Not Be $null
+    }
+
     It 'configures PSReadLine prompt text when transient prompt is enabled' {
         if (-not (Get-Command Set-PSReadLineOption -ErrorAction SilentlyContinue)) {
             Set-ItResult -Skipped -Because 'PSReadLine is not available in this host.'
@@ -1409,13 +1427,186 @@ Describe 'CleanCli module behavior' {
 
                 $folder.Icon | Should Not Be ''
                 $markdown.Icon | Should Not Be ''
-                $folder.DisplayName | Should Match 'src$'
-                $markdown.DisplayName | Should Match 'README.md$'
+                $folder.Name | Should Be 'src'
+                $markdown.Name | Should Be 'README.md'
+                $folder.DisplayName | Should Match 'src'
+                $markdown.DisplayName | Should Match 'README.md'
             }
         }
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
             Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'uses supported native glyphs for common special directories' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        foreach ($name in @('.cache', '.config', '.docker', '.vscode', 'Contacts', 'Desktop', 'Documents', 'Downloads', 'Music')) {
+            New-Item -ItemType Directory -Path (Join-Path $tempRoot $name) | Out-Null
+        }
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Force
+                $expected = @{
+                    '.cache' = 'U+F013'
+                    '.config' = 'U+E615'
+                    '.docker' = 'U+E7B0'
+                    '.vscode' = 'U+E70C'
+                    'Contacts' = 'U+F0C0'
+                    'Desktop' = 'U+F108'
+                    'Documents' = 'U+F15C'
+                    'Downloads' = 'U+F019'
+                    'Music' = 'U+F001'
+                }
+
+                foreach ($name in $expected.Keys) {
+                    $icon = ($items | Where-Object Name -eq $name).Icon
+                    $codePoint = 'U+' + ([int][char]$icon[0]).ToString('X4')
+                    $codePoint | Should Be $expected[$name]
+                    Test-CleanCliIconGlyphSupported -Icon $icon | Should Be $true
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'rejects known legacy Nerd Font glyphs that render as invalid icons' {
+        InModuleScope CleanCli {
+            Test-CleanCliIconGlyphSupported -Icon ([string][char]0xf5e7) | Should Be $false
+            Test-CleanCliIconGlyphSupported -Icon ([string][char]0xfbc9) | Should Be $false
+            Test-CleanCliIconGlyphSupported -Icon ([string][char]0xfcbe) | Should Be $false
+            Test-CleanCliIconGlyphSupported -Icon ([string][char]0xf832) | Should Be $false
+            Test-CleanCliIconGlyphSupported -Icon ([string][char]0xf07b) | Should Be $true
+        }
+    }
+
+    It 'uses native icons instead of importing Terminal-Icons when Nerd Font support is detected' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot '.cache') | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            $env:CLEANCLI_NERD_FONT = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value terminal-icons | Out-Null
+                function script:Format-TerminalIcons {
+                    throw 'Terminal-Icons should not be imported when native Nerd Font icons are available'
+                }
+
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Force
+
+                ($items | Where-Object Name -eq '.cache').Icon | Should Be ([string][char]0xf013)
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_NERD_FONT -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'reports icon routing diagnostics for the current shell' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_NERD_FONT = '1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value terminal-icons | Out-Null
+            }
+
+            $diagnostics = Get-CleanCliIconDiagnostics
+
+            $diagnostics.ConfiguredIconMode | Should Be 'terminal-icons'
+            $diagnostics.EffectiveIconMode | Should Be 'native'
+            $diagnostics.NerdFontDetected | Should Be $true
+            $diagnostics.LsDefinition | Should Not Be $null
+            $diagnostics.DirDefinition | Should Not Be $null
+            $diagnostics.TerminalIconsLoaded | Should Be $false
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_NERD_FONT -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'routes ls and dir through CleanCli when icon mode is enabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $originalLs = (Get-Alias ls -ErrorAction SilentlyContinue).Definition
+        $originalDir = (Get-Alias dir -ErrorAction SilentlyContinue).Definition
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliIconAliases
+            }
+
+            (Get-Alias ls -Scope Global).Definition | Should Be 'Get-CleanCliChildItem'
+            (Get-Alias dir -Scope Global).Definition | Should Be 'Get-CleanCliChildItem'
+        }
+        finally {
+            InModuleScope CleanCli {
+                Restore-CleanCliIconAliases
+            }
+            if ($originalLs) {
+                Set-Alias -Name ls -Value $originalLs -Scope Global -Force
+            }
+            if ($originalDir) {
+                Set-Alias -Name dir -Value $originalDir -Scope Global -Option AllScope -Force
+            }
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'updates icon aliases when IconMode changes in an enabled session' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $originalLs = (Get-Alias ls -ErrorAction SilentlyContinue).Definition
+        $originalDir = (Get-Alias dir -ErrorAction SilentlyContinue).Definition
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+            }
+
+            (Get-Alias ls -Scope Global).Definition | Should Be 'Get-CleanCliChildItem'
+            (Get-Alias dir -Scope Global).Definition | Should Be 'Get-CleanCliChildItem'
+        }
+        finally {
+            InModuleScope CleanCli {
+                Restore-CleanCliIconAliases
+            }
+            if ($originalLs) {
+                Set-Alias -Name ls -Value $originalLs -Scope Global -Force
+            }
+            if ($originalDir) {
+                Set-Alias -Name dir -Value $originalDir -Scope Global -Option AllScope -Force
+            }
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
@@ -1446,12 +1637,63 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'formats icon directory listings as a compact table' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'hosts') -Value '127.0.0.1 localhost' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+            }
+
+            $text = Get-CleanCliChildItem -Path $tempRoot | Out-String
+
+            $text | Should Not Match 'Mode\s+LastWriteTime\s+Length\s+Name'
+            $text | Should Match '-a---\s+\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}'
+            $text | Should Match 'hosts'
+            $text | Should Not Match 'DisplayName\s+:'
+            $text | Should Not Match 'FullName\s+:'
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'colors native icon display names with ANSI sequences' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+            }
+
+            $item = Get-CleanCliChildItem -Path $tempRoot | Where-Object Name -eq 'README.md'
+            $escape = [char]27
+
+            $item.DisplayName | Should Match "$escape\[38;2;"
+            $item.DisplayName | Should Match "$escape\[0m$"
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'delegates directory listings to Terminal-Icons when compatibility mode is selected and installed' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
         try {
             $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_NERD_FONT = '0'
             InModuleScope CleanCli {
                 Initialize-CleanCliOptions | Out-Null
                 Set-CleanCliOption -Name IconMode -Value terminal-icons | Out-Null
@@ -1471,6 +1713,7 @@ Describe 'CleanCli module behavior' {
         }
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_NERD_FONT -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }

@@ -7,6 +7,8 @@ $script:CleanCliState = [ordered]@{
     OriginalExtraPromptLineCount = $null
     OriginalPSReadLineOptionsCaptured = $false
     OriginalKeyHandlers = @{}
+    OriginalAliases = @{}
+    IconAliasesEnabled = $false
     LastPromptMilliseconds = 0
     LastGitDurationMilliseconds = 0
     LastGit = $null
@@ -91,6 +93,7 @@ function Enable-CleanCli {
     }
 
     Set-CleanCliPSReadLine
+    Set-CleanCliIconAliases
     Set-Item -Path Function:\global:prompt -Value {
         $module = Get-Module CleanCli
         if ($module) {
@@ -113,6 +116,7 @@ function Disable-CleanCli {
     }
 
     Restore-CleanCliPSReadLine
+    Restore-CleanCliIconAliases
     $script:CleanCliState.Enabled = $false
 }
 
@@ -141,7 +145,9 @@ function Get-CleanCliStatus {
 function Measure-CleanCliStartup {
     [CmdletBinding()]
     param(
-        [string]$PowerShellPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        [string]$PowerShellPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source,
+        [ValidateRange(1, 50)]
+        [int]$Iterations = 1
     )
 
     if (-not $PowerShellPath) {
@@ -149,49 +155,91 @@ function Measure-CleanCliStartup {
     }
 
     $modulePath = Join-Path $script:CleanCliRoot 'CleanCli.psd1'
-    $noProfile = Measure-Command {
-        & $PowerShellPath -NoProfile -Command '$PSVersionTable.PSVersion.ToString() | Out-Null'
-    }
-    $cleanCliImport = Measure-Command {
-        & $PowerShellPath -NoProfile -Command "Import-Module '$modulePath' -Force"
-    }
-    $cleanCliEnable = Measure-Command {
-        & $PowerShellPath -NoProfile -Command "Import-Module '$modulePath' -Force; Enable-CleanCli; Get-CleanCliStatus | Out-Null"
-    }
-    $terminalIconsImport = Measure-Command {
-        & $PowerShellPath -NoProfile -Command 'Import-Module Terminal-Icons -ErrorAction SilentlyContinue'
-    }
-    $cleanCliWithTerminalIcons = Measure-Command {
-        & $PowerShellPath -NoProfile -Command "Import-Module Terminal-Icons -ErrorAction SilentlyContinue; Import-Module '$modulePath' -Force; Enable-CleanCli; Get-CleanCliStatus | Out-Null"
-    }
-    $profileLoad = Measure-Command {
-        & $PowerShellPath -Command 'exit'
-    }
-    $oldInteractiveOnly = $env:CLEANCLI_INTERACTIVE_ONLY
-    try {
-        $env:CLEANCLI_INTERACTIVE_ONLY = '0'
-        $forcedProfileLoad = Measure-Command {
+
+    $samples = New-Object System.Collections.Generic.List[object]
+    for ($index = 0; $index -lt $Iterations; $index++) {
+        $noProfile = Measure-Command {
+            & $PowerShellPath -NoProfile -Command '$PSVersionTable.PSVersion.ToString() | Out-Null'
+        }
+        $cleanCliImport = Measure-Command {
+            & $PowerShellPath -NoProfile -Command "Import-Module '$modulePath' -Force"
+        }
+        $cleanCliEnable = Measure-Command {
+            & $PowerShellPath -NoProfile -Command "Import-Module '$modulePath' -Force; Enable-CleanCli; Get-CleanCliStatus | Out-Null"
+        }
+        $terminalIconsImport = Measure-Command {
+            & $PowerShellPath -NoProfile -Command 'Import-Module Terminal-Icons -ErrorAction SilentlyContinue'
+        }
+        $cleanCliWithTerminalIcons = Measure-Command {
+            & $PowerShellPath -NoProfile -Command "Import-Module Terminal-Icons -ErrorAction SilentlyContinue; Import-Module '$modulePath' -Force; Enable-CleanCli; Get-CleanCliStatus | Out-Null"
+        }
+        $profileLoad = Measure-Command {
             & $PowerShellPath -Command 'exit'
         }
-    }
-    finally {
-        if ($null -eq $oldInteractiveOnly) {
-            Remove-Item Env:\CLEANCLI_INTERACTIVE_ONLY -ErrorAction SilentlyContinue
+        $oldInteractiveOnly = $env:CLEANCLI_INTERACTIVE_ONLY
+        try {
+            $env:CLEANCLI_INTERACTIVE_ONLY = '0'
+            $forcedProfileLoad = Measure-Command {
+                & $PowerShellPath -Command 'exit'
+            }
         }
-        else {
-            $env:CLEANCLI_INTERACTIVE_ONLY = $oldInteractiveOnly
+        finally {
+            if ($null -eq $oldInteractiveOnly) {
+                Remove-Item Env:\CLEANCLI_INTERACTIVE_ONLY -ErrorAction SilentlyContinue
+            }
+            else {
+                $env:CLEANCLI_INTERACTIVE_ONLY = $oldInteractiveOnly
+            }
         }
+
+        $samples.Add([pscustomobject]@{
+            NoProfileMilliseconds = [math]::Round($noProfile.TotalMilliseconds, 2)
+            CleanCliImportMilliseconds = [math]::Round($cleanCliImport.TotalMilliseconds, 2)
+            CleanCliEnableMilliseconds = [math]::Round($cleanCliEnable.TotalMilliseconds, 2)
+            TerminalIconsImportMilliseconds = [math]::Round($terminalIconsImport.TotalMilliseconds, 2)
+            CleanCliWithTerminalIconsMilliseconds = [math]::Round($cleanCliWithTerminalIcons.TotalMilliseconds, 2)
+            ProfileLoadMilliseconds = [math]::Round($profileLoad.TotalMilliseconds, 2)
+            ForcedProfileLoadMilliseconds = [math]::Round($forcedProfileLoad.TotalMilliseconds, 2)
+        }) | Out-Null
     }
 
-    [pscustomobject]@{
-        NoProfileMilliseconds = [math]::Round($noProfile.TotalMilliseconds, 2)
-        CleanCliImportMilliseconds = [math]::Round($cleanCliImport.TotalMilliseconds, 2)
-        CleanCliEnableMilliseconds = [math]::Round($cleanCliEnable.TotalMilliseconds, 2)
-        TerminalIconsImportMilliseconds = [math]::Round($terminalIconsImport.TotalMilliseconds, 2)
-        CleanCliWithTerminalIconsMilliseconds = [math]::Round($cleanCliWithTerminalIcons.TotalMilliseconds, 2)
-        ProfileLoadMilliseconds = [math]::Round($profileLoad.TotalMilliseconds, 2)
-        ForcedProfileLoadMilliseconds = [math]::Round($forcedProfileLoad.TotalMilliseconds, 2)
+    function Add-CleanCliStartupStatistic {
+        param(
+            [System.Collections.IDictionary]$Target,
+            [string]$Name
+        )
+
+        $values = @($samples | ForEach-Object { [double]$_.$Name })
+        $measure = $values | Measure-Object -Minimum -Maximum -Average
+        $Target["${Name}Minimum"] = [math]::Round([double]$measure.Minimum, 2)
+        $Target["${Name}Average"] = [math]::Round([double]$measure.Average, 2)
+        $Target["${Name}Maximum"] = [math]::Round([double]$measure.Maximum, 2)
     }
+
+    $last = $samples[$samples.Count - 1]
+    $result = [ordered]@{
+        Iterations = $Iterations
+        NoProfileMilliseconds = $last.NoProfileMilliseconds
+        CleanCliImportMilliseconds = $last.CleanCliImportMilliseconds
+        CleanCliEnableMilliseconds = $last.CleanCliEnableMilliseconds
+        TerminalIconsImportMilliseconds = $last.TerminalIconsImportMilliseconds
+        CleanCliWithTerminalIconsMilliseconds = $last.CleanCliWithTerminalIconsMilliseconds
+        ProfileLoadMilliseconds = $last.ProfileLoadMilliseconds
+        ForcedProfileLoadMilliseconds = $last.ForcedProfileLoadMilliseconds
+    }
+    foreach ($name in @(
+        'NoProfileMilliseconds'
+        'CleanCliImportMilliseconds'
+        'CleanCliEnableMilliseconds'
+        'TerminalIconsImportMilliseconds'
+        'CleanCliWithTerminalIconsMilliseconds'
+        'ProfileLoadMilliseconds'
+        'ForcedProfileLoadMilliseconds'
+    )) {
+        Add-CleanCliStartupStatistic -Target $result -Name $name
+    }
+
+    [pscustomobject]$result
 }
 
-Export-ModuleMember -Function Enable-CleanCli, Disable-CleanCli, Get-CleanCliStatus, Measure-CleanCliStartup, Get-CleanCliOption, Set-CleanCliOption, Get-CleanCliChildItem, Set-CleanCliLocation, Get-CleanCliLocationHistory, Open-CleanCliExplorer, Show-CleanCliGitLog, Install-CleanCli
+Export-ModuleMember -Function Enable-CleanCli, Disable-CleanCli, Get-CleanCliStatus, Measure-CleanCliStartup, Get-CleanCliOption, Set-CleanCliOption, Get-CleanCliChildItem, Get-CleanCliIconDiagnostics, Set-CleanCliLocation, Get-CleanCliLocationHistory, Open-CleanCliExplorer, Show-CleanCliGitLog, Install-CleanCli

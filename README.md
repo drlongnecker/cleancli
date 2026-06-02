@@ -101,6 +101,7 @@ Environment variables still override config for existing compatibility:
 
 - `CLEANCLI_ASCII=1`
 - `CLEANCLI_TRANSIENT=1`
+- `CLEANCLI_NERD_FONT=1` to force native Nerd Font icon mode, or `CLEANCLI_NERD_FONT=0` to force Terminal-Icons compatibility mode when selected
 
 ## Prompt Display
 
@@ -124,9 +125,11 @@ Set segment color options such as `PathForeground`, `PathBackground`, `GitForegr
 
 CleanCli can render optional file and folder icons for directory listings without downloading themes or metadata. The default `IconMode = 'disabled'` keeps normal `Get-ChildItem` output.
 
-Use `Get-CleanCliChildItem` for icon-aware directory listings. Set `IconMode` to `native` for CleanCli's offline glyph map, `terminal-icons` to delegate to the installed `Terminal-Icons` module when available, or `ascii` for `[D]` and `[F]` markers. If `IconMode = 'native'` and ASCII mode is enabled, CleanCli uses ASCII-safe icons.
+Use `Get-CleanCliChildItem` for icon-aware directory listings. When `IconMode` is enabled, the profile also routes `ls` and `dir` through `Get-CleanCliChildItem`. Set `IconMode` to `native` for CleanCli's offline glyph map, `terminal-icons` to use the installed `Terminal-Icons` module as a compatibility fallback, or `ascii` for `[D]` and `[F]` markers. If `IconMode = 'native'` and ASCII mode is enabled, CleanCli uses ASCII-safe icons.
 
-The bundled profile imports `Terminal-Icons` with `-ErrorAction SilentlyContinue` so normal `Get-ChildItem`, `ls`, and `dir` output can show glyphs when the local module is installed. CleanCli still works without that module.
+The bundled profile does not import `Terminal-Icons` at startup. When `IconMode = 'terminal-icons'`, CleanCli uses native glyphs if Nerd Font support is detected, then falls back to lazy `Terminal-Icons` import only when needed. CleanCli checks `CLEANCLI_NERD_FONT` first and can also detect common Windows Terminal Nerd Font settings such as CaskaydiaCove Nerd Font.
+
+CleanCli native icons avoid known legacy Nerd Font codepoints from old Terminal-Icons `nf-mdi-*` mappings that can render as invalid symbols in current fonts.
 
 ## Key Bindings
 
@@ -165,12 +168,16 @@ If git is slow, the prompt degrades to branch-only information and records the s
 Import-Module .\src\CleanCli\CleanCli.psd1 -Force
 Enable-CleanCli
 Get-CleanCliStatus
+Get-CleanCliIconDiagnostics
 Measure-CleanCliStartup
+Measure-CleanCliStartup -Iterations 5
 ```
 
 `Get-CleanCliStatus` includes `LastGitDurationMilliseconds` so slow repositories can be identified from the last bounded git call. `LastGit` includes the repo root, git dir, cache key, exact git arguments, suppression count and threshold, data source (`none`, `branch-only`, `full`, `cached`, `last-successful`, or `suppressed`), and the parsed status counters (`Added`, `Modified`, `Deleted`, `Moved`, `Unmerged`, `Untracked`, and `StatusSummary`).
 
-`Measure-CleanCliStartup` reports separate timings for the no-profile baseline, CleanCli import, CleanCli enable, Terminal-Icons import, CleanCli plus Terminal-Icons, normal profile load, and forced profile load. Use those fields to attribute startup regressions to CleanCli or optional icon loading.
+`Get-CleanCliIconDiagnostics` reports the configured and effective icon mode, Nerd Font detection, Terminal-Icons availability and load state, and the current `ls` and `dir` alias routing.
+
+`Measure-CleanCliStartup` reports separate timings for the no-profile baseline, CleanCli import, CleanCli enable, Terminal-Icons import, CleanCli plus Terminal-Icons, normal profile load, and forced profile load. Use `-Iterations` to add min/average/max statistics for each layer and reduce noise from one-off Windows process startup variance.
 
 `Get-CleanCliStatus` also reports `HostName`, `LoadStatus`, and `LoadReason` so profile diagnostics can explain whether CleanCli loaded or skipped initialization. Set `EnableInCodex`, `EnableInVSCode`, `EnableInWindowsTerminal`, or `EnableInPlainConsole` to `$false` to skip prompt initialization for that host.
 

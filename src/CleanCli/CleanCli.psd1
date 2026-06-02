@@ -15,6 +15,7 @@
         'Get-CleanCliOption',
         'Set-CleanCliOption',
         'Get-CleanCliChildItem',
+        'Get-CleanCliIconDiagnostics',
         'Set-CleanCliLocation',
         'Get-CleanCliLocationHistory',
         'Open-CleanCliExplorer',
@@ -24,4 +25,5 @@
     CmdletsToExport = @()
     VariablesToExport = @()
     AliasesToExport = @()
+    FormatsToProcess = @('CleanCli.format.ps1xml')
 }
