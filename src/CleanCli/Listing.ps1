@@ -136,6 +136,8 @@ function Resolve-CleanCliListingInput {
         return [pscustomobject]@{
             Path = $Path
             Qualifier = $Qualifier
+            NameLike = ''
+            FileOnly = $false
         }
     }
 
@@ -143,19 +145,40 @@ function Resolve-CleanCliListingInput {
         return [pscustomobject]@{
             Path = $Path
             Qualifier = $Qualifier
+            NameLike = ''
+            FileOnly = $false
         }
     }
 
-    if ($Path[0] -in @('/', '.', '@', '^', '[')) {
+    if ($Path[0] -in @('/', '.', '@', '^', '[') -and -not $Path.StartsWith('.\') -and -not $Path.StartsWith('./')) {
         return [pscustomobject]@{
             Path = '.'
             Qualifier = $Path
+            NameLike = ''
+            FileOnly = $false
+        }
+    }
+
+    if ($Path.IndexOfAny([char[]]@('*', '?')) -ge 0) {
+        $parentPath = Split-Path -Path $Path -Parent
+        $nameLike = Split-Path -Path $Path -Leaf
+        if (-not $parentPath) {
+            $parentPath = '.'
+            $nameLike = $Path
+        }
+        return [pscustomobject]@{
+            Path = $parentPath
+            Qualifier = $Qualifier
+            NameLike = $nameLike
+            FileOnly = [bool]($nameLike -match '^\*\.[^\\/:*?"<>|]+$')
         }
     }
 
     [pscustomobject]@{
         Path = $Path
         Qualifier = $Qualifier
+        NameLike = ''
+        FileOnly = $false
     }
 }
 

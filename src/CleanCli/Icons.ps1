@@ -502,9 +502,11 @@ function Get-CleanCliChildItem {
     $input = Resolve-CleanCliListingInput -Path $Path -Qualifier $Qualifier
     $Path = $input.Path
     $Qualifier = $input.Qualifier
+    $effectiveNameLike = if ($NameLike) { $NameLike } else { $input.NameLike }
+    $effectiveFile = [bool]($File -or ($input.FileOnly -and -not $Directory -and -not $Symlink))
 
     $query = New-CleanCliListingQuery `
-        -File:$File `
+        -File:$effectiveFile `
         -Directory:$Directory `
         -Symlink:$Symlink `
         -Empty:$Empty `
@@ -515,7 +517,7 @@ function Get-CleanCliChildItem {
         -AccessedBefore $AccessedBefore `
         -LargerThan $LargerThan `
         -SmallerThan $SmallerThan `
-        -NameLike $NameLike `
+        -NameLike $effectiveNameLike `
         -Extension $Extension `
         -Sort $Sort `
         -Descending:$Descending `

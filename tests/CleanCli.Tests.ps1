@@ -2283,6 +2283,44 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'treats PowerShell-style wildcard arguments as listing name filters' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'xi') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'folder.exe') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot '.config') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'app.exe') -Value 'app' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot '.profile') -Value 'profile' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'xip.txt') -Value 'xip' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'note.txt') -Value 'note' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    (Get-CleanCliChildItem xi).Count | Should Be 0
+                    (Get-CleanCliChildItem xi* | Sort-Object Name).Name -join ',' | Should Be 'xi,xip.txt'
+                    (Get-CleanCliChildItem *.exe | Sort-Object Name).Name -join ',' | Should Be 'app.exe'
+                    (Get-CleanCliChildItem .* | Sort-Object Name).Name -join ',' | Should Be '.profile,app.exe,CleanCli.config.psd1,note.txt,xip.txt'
+                    (Get-CleanCliChildItem ..* | Sort-Object Name).Name -join ',' | Should Be '.profile'
+                    (Get-CleanCliChildItem /.* | Sort-Object Name).Name -join ',' | Should Be '.config'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'supports explicit and implicit qualifiers beyond directory filtering' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tempRoot | Out-Null
@@ -2413,6 +2451,7 @@ Describe 'CleanCli module behavior' {
         New-Item -ItemType Directory -Path (Join-Path $tempRoot 'cleanclip') | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $tempRoot 'src') | Out-Null
         New-Item -ItemType Directory -Path (Join-Path $tempRoot '.config') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot '.profile') -Value 'profile' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $tempRoot 'src\child.txt') -Value 'child' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $tempRoot '.config\settings.json') -Value '{}' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
@@ -2440,17 +2479,17 @@ Describe 'CleanCli module behavior' {
 
                 $readmeText = Get-Content -LiteralPath $env:CLEANCLI_TEST_README -Raw
                 $section = [regex]::Match($readmeText, '(?s)### Listing Filters and Qualifiers(?<body>.*?)## Key Bindings').Groups['body'].Value
-                $quotedQualifiers = @([regex]::Matches($section, 'ls(?:\s+-File)?(?:\s+-Extension\s+psm1)?\s+-Qualifier\s+"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
-                $implicitQualifiers = @([regex]::Matches($section, 'ls\s+"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
-
-                foreach ($qualifier in @($quotedQualifiers | Select-Object -Unique)) {
-                    { Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier $qualifier | Out-Null } | Should Not Throw
-                }
+                $codeSpanCommands = @([regex]::Matches($section, '`(ls[^`]*)`') | ForEach-Object { $_.Groups[1].Value })
+                $fencedCommands = @($section -split "`r?`n" | Where-Object { $_ -match '^ls\s' })
+                $commands = @($codeSpanCommands + $fencedCommands | ForEach-Object {
+                    $_.Replace('\|', '|')
+                } | Select-Object -Unique)
 
                 Push-Location $env:CLEANCLI_TEST_PATH
                 try {
-                    foreach ($qualifier in @($implicitQualifiers | Select-Object -Unique)) {
-                        { Get-CleanCliChildItem $qualifier | Out-Null } | Should Not Throw
+                    Set-Alias -Name ls -Value Get-CleanCliChildItem -Scope Local -Force
+                    foreach ($command in $commands) {
+                        { Invoke-Expression $command | Out-Null } | Should Not Throw
                     }
                 }
                 finally {
@@ -2573,6 +2612,39 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
             $output = & $powerShellPath -NoProfile -Command $command
 
             ($output | Select-Object -Last 1) | Should Be 'fresh.txt'
+        }
+        finally {
+            Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'resolves PowerShell-style wildcard arguments through the ls alias in a fresh shell' {
+        $powerShellPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $powerShellPath) {
+            Set-ItResult -Skipped -Because 'pwsh is not available in this host.'
+            return
+        }
+
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'folder.exe') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'app.exe') -Value 'app' -Encoding ASCII
+        $configPath = Join-Path $env:TEMP "CleanCli.$([guid]::NewGuid().ToString('N')).config.psd1"
+        Set-Content -LiteralPath $configPath -Value "@{ IconMode = 'native'; DirectoryReadAheadMode = 'disabled' }" -Encoding ASCII
+
+        try {
+            $command = @"
+`$env:CLEANCLI_CONFIG_PATH = '$($configPath.Replace("'", "''"))'
+Import-Module '$($ModulePath.Replace("'", "''"))' -Force
+Enable-CleanCli
+Set-Location '$($tempRoot.Replace("'", "''"))'
+(ls *.exe | Select-Object -ExpandProperty Name) -join ','
+"@
+
+            $output = & $powerShellPath -NoProfile -Command $command
+
+            ($output | Select-Object -Last 1) | Should Be 'app.exe'
         }
         finally {
             Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue

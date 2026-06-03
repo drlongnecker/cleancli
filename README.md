@@ -212,73 +212,80 @@ Directory metadata read-ahead is controlled by `DirectoryReadAheadMode`, `Direct
 
 CleanCli adds chainable listing filters for common `ls` workflows. New users can use explicit PowerShell flags. Advanced users can use compact zsh-style qualifier strings. `-Qualifier` is the explicit qualifier form. A qualifier-looking positional string is the implicit shorthand.
 
-PowerShell does not preserve quote characters when it calls a function, so CleanCli cannot literally detect whether an argument was quoted. Instead, if the first positional argument is not an existing path and starts with qualifier syntax such as `/`, `.`, `@`, `^`, or `[`, CleanCli treats it as a qualifier against the current directory.
+PowerShell does not preserve quote characters when it calls a function, so CleanCli cannot literally detect whether an argument was quoted. Instead, if the first positional argument is not an existing path and starts with qualifier syntax such as `/`, `.`, `@`, `^`, or `[`, CleanCli treats it as a qualifier against the current directory. Most qualifier strings work without quotes. Keep quotes around `@` and slice qualifiers such as `Om[1,10]` because PowerShell parses those before CleanCli receives the argument.
 
 ```powershell
 ls cleancli             # path form: lists the cleancli directory
-ls "/clea*"             # implicit qualifier: lists directories in the current directory whose names start with clea
-ls -Qualifier ".m-7"    # explicit qualifier: lists files modified within the last 7 days
-ls ".a+2"               # implicit qualifier: lists files accessed more than 2 days ago
+ls /clea*               # implicit qualifier: lists directories in the current directory whose names start with clea
+ls *.exe                # wildcard shorthand: lists executable files, not folders ending in .exe
+ls .*                   # implicit qualifier: lists files
+ls ..*                  # implicit qualifier: lists dotfiles such as .gitignore
+ls /.*                  # implicit qualifier: lists dot directories such as .config
+ls -Qualifier .m-7      # explicit qualifier: lists files modified within the last 7 days
+ls .a+2                 # implicit qualifier: lists files accessed more than 2 days ago
 ```
 
 | Goal | PowerShell flags | zsh-style qualifier | Notes |
 | --- | --- | --- | --- |
-| Directories only | `ls -Directory` | `ls -Qualifier "/"` | `/` means directory. |
-| Files only | `ls -File` | `ls -Qualifier "."` | `.` means file. |
-| Symlinks or reparse points | `ls -Symlink` | `ls -Qualifier "@"` | Uses Windows reparse point metadata. |
-| Empty directories | `ls -Directory -Empty` | `ls -Qualifier "/^F"` | `F` means non-empty directory, so `^F` means not non-empty. |
-| Non-empty directories | `ls -Directory -NonEmpty` | `ls -Qualifier "/F"` | `F` applies to directories. |
-| Directory name match | `ls -Directory -NameLike "clea*"` | `ls "/clea*"` | A trailing pattern after `/`, `.`, or `@` becomes a name filter. |
-| Non-empty dot directories | `ls -Directory -NonEmpty -NameLike ".*"` | `ls -Qualifier "/F.*"` | After `/F`, `.*` is a name filter for dot folders. |
-| File name match | `ls -File -NameLike "*.ps1"` | `ls -Qualifier ".*.ps1"` | The first `.` selects files; the rest is the name pattern. |
+| Directories only | `ls -Directory` | `ls -Qualifier /` | `/` means directory. |
+| Files only | `ls -File` | `ls -Qualifier .` | `.` means file. |
+| Symlinks or reparse points | `ls -Symlink` | `ls -Qualifier '@'` | Uses Windows reparse point metadata. |
+| Empty directories | `ls -Directory -Empty` | `ls -Qualifier /^F` | `F` means non-empty directory, so `^F` means not non-empty. |
+| Non-empty directories | `ls -Directory -NonEmpty` | `ls -Qualifier /F` | `F` applies to directories. |
+| Directory name match | `ls -Directory -NameLike clea*` | `ls /clea*` | A trailing pattern after `/`, `.`, or `@` becomes a name filter. |
+| Non-empty dot directories | `ls -Directory -NonEmpty -NameLike .*` | `ls -Qualifier /F.*` | After `/F`, `.*` is a name filter for dot folders. |
+| Dot directories | `ls -Directory -NameLike .*` | `ls /.*` | Lists directories such as `.config`. |
+| File name match | `ls -File -NameLike *.ps1` | `ls *.ps1` | Extension-shaped wildcards are file-only. |
+| All files shorthand | `ls -File` | `ls .*` | The first `.` selects files; the rest is the `*` name pattern. |
+| Dotfiles | `ls -File -NameLike .*` | `ls ..*` | The first `.` selects files; the rest is the `.*` name pattern. |
 | Extension match | `ls -File -Extension ps1,psm1` | `ls -File -Extension ps1,psm1` | Extension filtering is flag-only for now. |
 
 Time qualifiers use `-` for "within" and `+` for "before/older than". A bare `m` or `a` uses days. Add `h`, `m`, or `s` after the letter for zsh-style units, or put the unit after the number as a PowerShell-friendly duration suffix.
 
 | Goal | PowerShell flags | zsh-style qualifier | Notes |
 | --- | --- | --- | --- |
-| Modified within 7 days | `ls -ModifiedWithin 7d` | `ls -Qualifier "m-7"` | `m` means modified time. |
-| Files modified within 7 days | `ls -File -ModifiedWithin 7d` | `ls -Qualifier ".m-7"` | Compose file type plus modified time. |
-| Modified more than 7 days ago | `ls -ModifiedBefore 7d` | `ls -Qualifier "m+7"` | `+` means older than the duration. |
-| Modified within 3 hours | `ls -ModifiedWithin 3h` | `ls -Qualifier "mh-3"` | `mh` means modified hours. |
-| Modified within 30 minutes | `ls -ModifiedWithin 30m` | `ls -Qualifier "mm-30"` | `mm` means modified minutes. |
-| Modified within 70 minutes | `ls -ModifiedWithin 70m` | `ls -Qualifier "m-70m"` | Duration suffixes also work. |
-| Modified within 45 seconds | `ls -ModifiedWithin 45s` | `ls -Qualifier "ms-45"` | `ms` means modified seconds. |
-| Accessed within 2 days | `ls -AccessedWithin 2d` | `ls -Qualifier "a-2"` | `a` means access time. |
-| Accessed more than 2 days ago | `ls -AccessedBefore 2d` | `ls -Qualifier "a+2"` | Uses `LastAccessTime`. |
-| Files and directories accessed more than 2 days ago | `ls -File -AccessedBefore 2d; ls -Directory -AccessedBefore 2d` | `ls -Qualifier "./a+2"` | Type qualifiers combine as a union before the time filter. |
+| Modified within 7 days | `ls -ModifiedWithin 7d` | `ls -Qualifier m-7` | `m` means modified time. |
+| Files modified within 7 days | `ls -File -ModifiedWithin 7d` | `ls -Qualifier .m-7` | Compose file type plus modified time. |
+| Modified more than 7 days ago | `ls -ModifiedBefore 7d` | `ls -Qualifier m+7` | `+` means older than the duration. |
+| Modified within 3 hours | `ls -ModifiedWithin 3h` | `ls -Qualifier mh-3` | `mh` means modified hours. |
+| Modified within 30 minutes | `ls -ModifiedWithin 30m` | `ls -Qualifier mm-30` | `mm` means modified minutes. |
+| Modified within 70 minutes | `ls -ModifiedWithin 70m` | `ls -Qualifier m-70m` | Duration suffixes also work. |
+| Modified within 45 seconds | `ls -ModifiedWithin 45s` | `ls -Qualifier ms-45` | `ms` means modified seconds. |
+| Accessed within 2 days | `ls -AccessedWithin 2d` | `ls -Qualifier a-2` | `a` means access time. |
+| Accessed more than 2 days ago | `ls -AccessedBefore 2d` | `ls -Qualifier a+2` | Uses `LastAccessTime`. |
+| Files and directories accessed more than 2 days ago | `ls -File -AccessedBefore 2d; ls -Directory -AccessedBefore 2d` | `ls -Qualifier ./a+2` | Type qualifiers combine as a union before the time filter. |
 
 Size qualifiers use `L`. `L+` means larger than, and `L-` means smaller than. Suffixes `k`, `m`, and `g` mean KB, MB, and GB.
 
 | Goal | PowerShell flags | zsh-style qualifier | Notes |
 | --- | --- | --- | --- |
-| Files larger than 10 MB | `ls -File -LargerThan 10mb` | `ls -Qualifier ".L+10m"` | Size filters apply to files. |
-| Files smaller than 100 KB | `ls -File -SmallerThan 100kb` | `ls -Qualifier ".L-100k"` | Directories are excluded by size filters. |
-| Largest files first | `ls -File -Sort size -Descending` | `ls -Qualifier ".OL"` | Uppercase `O` sorts descending. |
-| Smallest files first | `ls -File -Sort size` | `ls -Qualifier ".oL"` | Lowercase `o` sorts ascending. |
+| Files larger than 10 MB | `ls -File -LargerThan 10mb` | `ls -Qualifier .L+10m` | Size filters apply to files. |
+| Files smaller than 100 KB | `ls -File -SmallerThan 100kb` | `ls -Qualifier .L-100k` | Directories are excluded by size filters. |
+| Largest files first | `ls -File -Sort size -Descending` | `ls -Qualifier .OL` | Uppercase `O` sorts descending. |
+| Smallest files first | `ls -File -Sort size` | `ls -Qualifier .oL` | Lowercase `o` sorts ascending. |
 
 Sort qualifiers use `o` for ascending and `O` for descending. Slices are one-based and happen after filtering and sorting.
 
 | Goal | PowerShell flags | zsh-style qualifier | Notes |
 | --- | --- | --- | --- |
-| Name ascending | `ls -Sort name` | `ls -Qualifier "on"` | `n` means name. |
-| Name descending | `ls -Sort name -Descending` | `ls -Qualifier "On"` | Uppercase `O` reverses order. |
-| Newest first | `ls -Sort modified -Descending` | `ls -Qualifier "Om"` | `m` in sort position means modified time. |
-| Oldest first | `ls -Sort modified` | `ls -Qualifier "om"` | Lowercase `o` sorts ascending. |
-| Last accessed first | `ls -Sort accessed -Descending` | `ls -Qualifier "Oa"` | `a` in sort position means access time. |
-| First 10 after sorting | `ls -Sort modified -Descending -First 10` | `ls -Qualifier "Om[1,10]"` | `[1,10]` selects positions 1 through 10. |
-| Third item after name sort | `ls -Sort name -First 3 \| Select-Object -Last 1` | `ls -Qualifier "on[3]"` | `[3]` selects one position. |
-| Last 5 after current order | `ls -Last 5` | `ls -Qualifier "[-5,-1]"` | Negative slice indexes count from the end. |
+| Name ascending | `ls -Sort name` | `ls -Qualifier on` | `n` means name. |
+| Name descending | `ls -Sort name -Descending` | `ls -Qualifier On` | Uppercase `O` reverses order. |
+| Newest first | `ls -Sort modified -Descending` | `ls -Qualifier Om` | `m` in sort position means modified time. |
+| Oldest first | `ls -Sort modified` | `ls -Qualifier om` | Lowercase `o` sorts ascending. |
+| Last accessed first | `ls -Sort accessed -Descending` | `ls -Qualifier Oa` | `a` in sort position means access time. |
+| First 10 after sorting | `ls -Sort modified -Descending -First 10` | `ls -Qualifier 'Om[1,10]'` | `[1,10]` selects positions 1 through 10. |
+| Third item after name sort | `ls -Sort name -First 3 \| Select-Object -Last 1` | `ls -Qualifier 'on[3]'` | `[3]` selects one position. |
+| Last 5 after current order | `ls -Last 5` | `ls -Qualifier '[-5,-1]'` | Negative slice indexes count from the end. |
 
 Useful combinations:
 
 | Goal | PowerShell flags | zsh-style qualifier |
 | --- | --- | --- |
-| Ten newest PowerShell module files | `ls -File -Extension psm1 -Sort modified -Descending -First 10` | `ls -File -Extension psm1 -Qualifier "Om[1,10]"` |
-| Non-empty project folders starting with `src` | `ls -Directory -NonEmpty -NameLike "src*"` | `ls -Qualifier "/Fsrc*"` |
-| Largest five files in the current directory | `ls -File -Sort size -Descending -First 5` | `ls -Qualifier ".OL[1,5]"` |
-| Files modified in the last week, newest first | `ls -File -ModifiedWithin 7d -Sort modified -Descending` | `ls -Qualifier ".m-7Om"` |
-| Directory names starting with `clea` | `ls -Directory -NameLike "clea*"` | `ls "/clea*"` |
+| Ten newest PowerShell module files | `ls -File -Extension psm1 -Sort modified -Descending -First 10` | `ls -File -Extension psm1 -Qualifier 'Om[1,10]'` |
+| Non-empty project folders starting with `src` | `ls -Directory -NonEmpty -NameLike src*` | `ls -Qualifier /Fsrc*` |
+| Largest five files in the current directory | `ls -File -Sort size -Descending -First 5` | `ls -Qualifier '.OL[1,5]'` |
+| Files modified in the last week, newest first | `ls -File -ModifiedWithin 7d -Sort modified -Descending` | `ls -Qualifier .m-7Om` |
+| Directory names starting with `clea` | `ls -Directory -NameLike clea*` | `ls /clea*` |
 
 ## Key Bindings
 
