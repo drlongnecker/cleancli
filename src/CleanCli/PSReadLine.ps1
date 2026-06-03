@@ -34,16 +34,32 @@ function Get-CleanCliKeyBindingsForPreset {
         'powershell' { return @() }
         'minimal' {
             return @(
-                [pscustomobject]@{ Key = 'Tab'; Function = 'MenuComplete' }
+                [pscustomobject]@{ Key = 'Tab'; Function = 'MenuComplete'; ScriptBlock = $null; Description = $null }
             )
         }
         default {
             return @(
-                [pscustomobject]@{ Key = 'Tab'; Function = 'MenuComplete' }
-                [pscustomobject]@{ Key = 'RightArrow'; Function = 'AcceptSuggestion' }
-                [pscustomobject]@{ Key = 'Ctrl+r'; Function = 'ReverseSearchHistory' }
-                [pscustomobject]@{ Key = 'UpArrow'; Function = 'HistorySearchBackward' }
-                [pscustomobject]@{ Key = 'DownArrow'; Function = 'HistorySearchForward' }
+                [pscustomobject]@{ Key = 'Tab'; Function = 'MenuComplete'; ScriptBlock = $null; Description = $null }
+                [pscustomobject]@{ Key = 'RightArrow'; Function = 'ForwardChar'; ScriptBlock = $null; Description = $null }
+                [pscustomobject]@{ Key = 'Ctrl+r'; Function = 'ReverseSearchHistory'; ScriptBlock = $null; Description = $null }
+                [pscustomobject]@{
+                    Key = 'UpArrow'
+                    Function = $null
+                    ScriptBlock = {
+                        [Microsoft.PowerShell.PSConsoleReadLine]::HistorySearchBackward()
+                        [Microsoft.PowerShell.PSConsoleReadLine]::EndOfLine()
+                    }
+                    Description = 'Search history backward and leave the cursor at the end'
+                }
+                [pscustomobject]@{
+                    Key = 'DownArrow'
+                    Function = $null
+                    ScriptBlock = {
+                        [Microsoft.PowerShell.PSConsoleReadLine]::HistorySearchForward()
+                        [Microsoft.PowerShell.PSConsoleReadLine]::EndOfLine()
+                    }
+                    Description = 'Search history forward and leave the cursor at the end'
+                }
             )
         }
     }
@@ -73,7 +89,12 @@ function Set-CleanCliPSReadLine {
     }
 
     foreach ($binding in $bindings) {
-        Set-PSReadLineKeyHandler -Key $binding.Key -Function $binding.Function
+        if ($binding.ScriptBlock) {
+            Set-PSReadLineKeyHandler -Key $binding.Key -ScriptBlock $binding.ScriptBlock -Description $binding.Description
+        }
+        else {
+            Set-PSReadLineKeyHandler -Key $binding.Key -Function $binding.Function
+        }
     }
 }
 

@@ -127,10 +127,6 @@ function Save-CleanCliAlias {
 
 function Set-CleanCliIconAliases {
     $iconMode = Get-CleanCliIconMode
-    if ($iconMode -eq 'disabled') {
-        Restore-CleanCliIconAliases
-        return
-    }
 
     foreach ($name in @('ls', 'dir')) {
         Save-CleanCliAlias -Name $name
@@ -446,7 +442,8 @@ function ConvertTo-CleanCliIconItem {
 function Invoke-CleanCliTerminalIconsChildItem {
     param(
         [string]$Path,
-        [switch]$Force
+        [switch]$Force,
+        [object]$Query
     )
 
     if (-not (Get-Command Format-TerminalIcons -ErrorAction SilentlyContinue)) {
@@ -456,20 +453,22 @@ function Invoke-CleanCliTerminalIconsChildItem {
     }
 
     if (Get-Command Format-TerminalIcons -ErrorAction SilentlyContinue) {
-        if ($Force) {
-            return Get-ChildItem -LiteralPath $Path -Force | Format-TerminalIcons
+        $items = if ($Force) {
+            @(Get-ChildItem -LiteralPath $Path -Force)
         }
-
-        return Get-ChildItem -LiteralPath $Path | Format-TerminalIcons
+        else {
+            @(Get-ChildItem -LiteralPath $Path)
+        }
+        return (Invoke-CleanCliListingQuery -Items $items -Query $Query) | Format-TerminalIcons
     }
 
-    if ($Force) {
-        return Get-ChildItem -LiteralPath $Path -Force | ForEach-Object {
-            ConvertTo-CleanCliIconItem -Item $_ -IconMode native
-        }
+    $items = if ($Force) {
+        @(Get-ChildItem -LiteralPath $Path -Force)
     }
-
-    Get-ChildItem -LiteralPath $Path | ForEach-Object {
+    else {
+        @(Get-ChildItem -LiteralPath $Path)
+    }
+    Invoke-CleanCliListingQuery -Items $items -Query $Query | ForEach-Object {
         ConvertTo-CleanCliIconItem -Item $_ -IconMode native
     }
 }
@@ -478,11 +477,65 @@ function Get-CleanCliChildItem {
     [CmdletBinding()]
     param(
         [string]$Path = '.',
-        [switch]$Force
+        [switch]$Force,
+        [switch]$File,
+        [switch]$Directory,
+        [switch]$Symlink,
+        [switch]$Empty,
+        [switch]$NonEmpty,
+        [string]$ModifiedWithin,
+        [string]$ModifiedBefore,
+        [string]$AccessedWithin,
+        [string]$AccessedBefore,
+        [string]$LargerThan,
+        [string]$SmallerThan,
+        [string]$NameLike,
+        [string[]]$Extension,
+        [ValidateSet('name', 'size', 'modified', 'accessed')]
+        [string]$Sort,
+        [switch]$Descending,
+        [int]$First,
+        [int]$Last,
+        [string]$Qualifier
     )
+
+    $input = Resolve-CleanCliListingInput -Path $Path -Qualifier $Qualifier
+    $Path = $input.Path
+    $Qualifier = $input.Qualifier
+
+    $query = New-CleanCliListingQuery `
+        -File:$File `
+        -Directory:$Directory `
+        -Symlink:$Symlink `
+        -Empty:$Empty `
+        -NonEmpty:$NonEmpty `
+        -ModifiedWithin $ModifiedWithin `
+        -ModifiedBefore $ModifiedBefore `
+        -AccessedWithin $AccessedWithin `
+        -AccessedBefore $AccessedBefore `
+        -LargerThan $LargerThan `
+        -SmallerThan $SmallerThan `
+        -NameLike $NameLike `
+        -Extension $Extension `
+        -Sort $Sort `
+        -Descending:$Descending `
+        -First $First `
+        -Last $Last `
+        -Qualifier $Qualifier
 
     $iconMode = Get-CleanCliIconMode
     if ($iconMode -eq 'disabled') {
+        if ($query.HasCriteria) {
+            $items = if ($Force) {
+                @(Get-ChildItem -LiteralPath $Path -Force)
+            }
+            else {
+                @(Get-ChildItem -LiteralPath $Path)
+            }
+
+            return Invoke-CleanCliListingQuery -Items $items -Query $query
+        }
+
         if ($Force) {
             return Get-ChildItem -LiteralPath $Path -Force
         }
@@ -491,7 +544,7 @@ function Get-CleanCliChildItem {
     }
 
     if ($iconMode -eq 'terminal-icons') {
-        return Invoke-CleanCliTerminalIconsChildItem -Path $Path -Force:$Force
+        return Invoke-CleanCliTerminalIconsChildItem -Path $Path -Force:$Force -Query $query
     }
 
     Receive-CleanCliDirectoryReadAhead
@@ -502,7 +555,8 @@ function Get-CleanCliChildItem {
         @(Get-ChildItem -LiteralPath $Path)
     }
 
-    $result = foreach ($item in $items) {
+    $filteredItems = Invoke-CleanCliListingQuery -Items $items -Query $query
+    $result = foreach ($item in $filteredItems) {
         $metadata = $null
         if ($item.PSIsContainer) {
             $metadata = Get-CleanCliDirectoryMetadataForPath -Path $item.FullName

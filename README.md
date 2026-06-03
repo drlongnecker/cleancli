@@ -75,7 +75,7 @@ Example:
     DirectoryGitStatusMode = 'disabled'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'
-    IconMode = 'disabled'
+    IconMode = 'native'
     CommandDurationThresholdMilliseconds = 2000
     RightPrompt = $false
     PromptSeparator = 'auto'
@@ -194,11 +194,11 @@ Set prompt symbol options such as `PathSymbol`, `GitSymbol`, `DirtySymbol`, `Adm
 
 Set segment color options such as `PathForeground`, `PathBackground`, `GitForeground`, `GitBackground`, `TimeForeground`, `TimeBackground`, `AdminForeground`, and `AdminBackground` to one of `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, or `Default`.
 
-## Directory Icons
+## Directory Listings
 
-CleanCli can render optional file and folder icons for directory listings without downloading themes or metadata. The default `IconMode = 'disabled'` keeps normal `Get-ChildItem` output.
+CleanCli can render file and folder icons for directory listings without downloading themes or metadata. The default `IconMode = 'native'` uses CleanCli's offline glyph map.
 
-Use `Get-CleanCliChildItem` for icon-aware directory listings. When `IconMode` is enabled, the profile also routes `ls` and `dir` through `Get-CleanCliChildItem`. Set `IconMode` to `native` for CleanCli's offline glyph map, `terminal-icons` to use the installed `Terminal-Icons` module as a compatibility fallback, or `ascii` for `[D]` and `[F]` markers. If `IconMode = 'native'` and ASCII mode is enabled, CleanCli uses ASCII-safe icons.
+Use `Get-CleanCliChildItem` for CleanCli directory listings. The profile routes `ls` and `dir` through `Get-CleanCliChildItem` so listing shorthands work in normal shells. Set `IconMode` to `native` for CleanCli's offline glyph map, `terminal-icons` to use the installed `Terminal-Icons` module as a compatibility fallback, `ascii` for `[D]` and `[F]` markers, or `disabled` for normal `Get-ChildItem` objects without icon display fields. If `IconMode = 'native'` and ASCII mode is enabled, CleanCli uses ASCII-safe icons.
 
 The bundled profile does not import `Terminal-Icons` at startup. When `IconMode = 'terminal-icons'`, CleanCli uses native glyphs if Nerd Font support is detected, then falls back to lazy `Terminal-Icons` import only when needed. CleanCli checks `CLEANCLI_NERD_FONT` first and can also detect common Windows Terminal Nerd Font settings such as CaskaydiaCove Nerd Font.
 
@@ -208,16 +208,88 @@ When icon mode is `native` or `ascii`, CleanCli can enrich directory listings wi
 
 Directory metadata read-ahead is controlled by `DirectoryReadAheadMode`, `DirectoryReadAheadDepth`, `DirectoryMetadataCacheMilliseconds`, `DirectoryReadAheadMaxDirectories`, `DirectoryReadAheadDebounceMilliseconds`, `DirectoryAlwaysShowGitBranches`, and `DirectoryGitStatusMode`. The default keeps repository listings branch-only. Set `DirectoryGitStatusMode = 'async'` to opt into background `git status --porcelain --branch` calls that add clean/pending/dirty colors and compact counts such as `repo [main ahead 2 ?1 +1 ~1 -1]` after the async cache refresh completes.
 
+### Listing Filters and Qualifiers
+
+CleanCli adds chainable listing filters for common `ls` workflows. New users can use explicit PowerShell flags. Advanced users can use compact zsh-style qualifier strings. `-Qualifier` is the explicit qualifier form. A qualifier-looking positional string is the implicit shorthand.
+
+PowerShell does not preserve quote characters when it calls a function, so CleanCli cannot literally detect whether an argument was quoted. Instead, if the first positional argument is not an existing path and starts with qualifier syntax such as `/`, `.`, `@`, `^`, or `[`, CleanCli treats it as a qualifier against the current directory.
+
+```powershell
+ls cleancli             # path form: lists the cleancli directory
+ls "/clea*"             # implicit qualifier: lists directories in the current directory whose names start with clea
+ls -Qualifier ".m-7"    # explicit qualifier: lists files modified within the last 7 days
+ls ".a+2"               # implicit qualifier: lists files accessed more than 2 days ago
+```
+
+| Goal | PowerShell flags | zsh-style qualifier | Notes |
+| --- | --- | --- | --- |
+| Directories only | `ls -Directory` | `ls -Qualifier "/"` | `/` means directory. |
+| Files only | `ls -File` | `ls -Qualifier "."` | `.` means file. |
+| Symlinks or reparse points | `ls -Symlink` | `ls -Qualifier "@"` | Uses Windows reparse point metadata. |
+| Empty directories | `ls -Directory -Empty` | `ls -Qualifier "/^F"` | `F` means non-empty directory, so `^F` means not non-empty. |
+| Non-empty directories | `ls -Directory -NonEmpty` | `ls -Qualifier "/F"` | `F` applies to directories. |
+| Directory name match | `ls -Directory -NameLike "clea*"` | `ls "/clea*"` | A trailing pattern after `/`, `.`, or `@` becomes a name filter. |
+| Non-empty dot directories | `ls -Directory -NonEmpty -NameLike ".*"` | `ls -Qualifier "/F.*"` | After `/F`, `.*` is a name filter for dot folders. |
+| File name match | `ls -File -NameLike "*.ps1"` | `ls -Qualifier ".*.ps1"` | The first `.` selects files; the rest is the name pattern. |
+| Extension match | `ls -File -Extension ps1,psm1` | `ls -File -Extension ps1,psm1` | Extension filtering is flag-only for now. |
+
+Time qualifiers use `-` for "within" and `+` for "before/older than". A bare `m` or `a` uses days. Add `h`, `m`, or `s` after the letter for zsh-style units, or put the unit after the number as a PowerShell-friendly duration suffix.
+
+| Goal | PowerShell flags | zsh-style qualifier | Notes |
+| --- | --- | --- | --- |
+| Modified within 7 days | `ls -ModifiedWithin 7d` | `ls -Qualifier "m-7"` | `m` means modified time. |
+| Files modified within 7 days | `ls -File -ModifiedWithin 7d` | `ls -Qualifier ".m-7"` | Compose file type plus modified time. |
+| Modified more than 7 days ago | `ls -ModifiedBefore 7d` | `ls -Qualifier "m+7"` | `+` means older than the duration. |
+| Modified within 3 hours | `ls -ModifiedWithin 3h` | `ls -Qualifier "mh-3"` | `mh` means modified hours. |
+| Modified within 30 minutes | `ls -ModifiedWithin 30m` | `ls -Qualifier "mm-30"` | `mm` means modified minutes. |
+| Modified within 70 minutes | `ls -ModifiedWithin 70m` | `ls -Qualifier "m-70m"` | Duration suffixes also work. |
+| Modified within 45 seconds | `ls -ModifiedWithin 45s` | `ls -Qualifier "ms-45"` | `ms` means modified seconds. |
+| Accessed within 2 days | `ls -AccessedWithin 2d` | `ls -Qualifier "a-2"` | `a` means access time. |
+| Accessed more than 2 days ago | `ls -AccessedBefore 2d` | `ls -Qualifier "a+2"` | Uses `LastAccessTime`. |
+| Files and directories accessed more than 2 days ago | `ls -File -AccessedBefore 2d; ls -Directory -AccessedBefore 2d` | `ls -Qualifier "./a+2"` | Type qualifiers combine as a union before the time filter. |
+
+Size qualifiers use `L`. `L+` means larger than, and `L-` means smaller than. Suffixes `k`, `m`, and `g` mean KB, MB, and GB.
+
+| Goal | PowerShell flags | zsh-style qualifier | Notes |
+| --- | --- | --- | --- |
+| Files larger than 10 MB | `ls -File -LargerThan 10mb` | `ls -Qualifier ".L+10m"` | Size filters apply to files. |
+| Files smaller than 100 KB | `ls -File -SmallerThan 100kb` | `ls -Qualifier ".L-100k"` | Directories are excluded by size filters. |
+| Largest files first | `ls -File -Sort size -Descending` | `ls -Qualifier ".OL"` | Uppercase `O` sorts descending. |
+| Smallest files first | `ls -File -Sort size` | `ls -Qualifier ".oL"` | Lowercase `o` sorts ascending. |
+
+Sort qualifiers use `o` for ascending and `O` for descending. Slices are one-based and happen after filtering and sorting.
+
+| Goal | PowerShell flags | zsh-style qualifier | Notes |
+| --- | --- | --- | --- |
+| Name ascending | `ls -Sort name` | `ls -Qualifier "on"` | `n` means name. |
+| Name descending | `ls -Sort name -Descending` | `ls -Qualifier "On"` | Uppercase `O` reverses order. |
+| Newest first | `ls -Sort modified -Descending` | `ls -Qualifier "Om"` | `m` in sort position means modified time. |
+| Oldest first | `ls -Sort modified` | `ls -Qualifier "om"` | Lowercase `o` sorts ascending. |
+| Last accessed first | `ls -Sort accessed -Descending` | `ls -Qualifier "Oa"` | `a` in sort position means access time. |
+| First 10 after sorting | `ls -Sort modified -Descending -First 10` | `ls -Qualifier "Om[1,10]"` | `[1,10]` selects positions 1 through 10. |
+| Third item after name sort | `ls -Sort name -First 3 \| Select-Object -Last 1` | `ls -Qualifier "on[3]"` | `[3]` selects one position. |
+| Last 5 after current order | `ls -Last 5` | `ls -Qualifier "[-5,-1]"` | Negative slice indexes count from the end. |
+
+Useful combinations:
+
+| Goal | PowerShell flags | zsh-style qualifier |
+| --- | --- | --- |
+| Ten newest PowerShell module files | `ls -File -Extension psm1 -Sort modified -Descending -First 10` | `ls -File -Extension psm1 -Qualifier "Om[1,10]"` |
+| Non-empty project folders starting with `src` | `ls -Directory -NonEmpty -NameLike "src*"` | `ls -Qualifier "/Fsrc*"` |
+| Largest five files in the current directory | `ls -File -Sort size -Descending -First 5` | `ls -Qualifier ".OL[1,5]"` |
+| Files modified in the last week, newest first | `ls -File -ModifiedWithin 7d -Sort modified -Descending` | `ls -Qualifier ".m-7Om"` |
+| Directory names starting with `clea` | `ls -Directory -NameLike "clea*"` | `ls "/clea*"` |
+
 ## Key Bindings
 
 - `Tab`: menu completion
-- `RightArrow`: accept inline prediction
+- `RightArrow`: move the cursor right; at the end of the line, PSReadLine can accept inline prediction text
 - `Ctrl+r`: reverse history search
 - `UpArrow` / `DownArrow`: substring history search in the default `zsh` preset
 
 Inline predictions use PSReadLine history only. No plugin, package install, schema download, icon download, or remote metadata check is used.
 
-Set `KeyBindingPreset` to `zsh`, `powershell`, or `minimal`. `zsh` enables menu completion, substring history search, reverse search, and right-arrow suggestion acceptance. `powershell` leaves PSReadLine navigation bindings alone. `minimal` only tunes Tab completion.
+Set `KeyBindingPreset` to `zsh`, `powershell`, or `minimal`. `zsh` enables menu completion, substring history search, reverse search, and normal right-arrow cursor movement. `powershell` leaves PSReadLine navigation bindings alone. `minimal` only tunes Tab completion.
 
 Use `Set-CleanCliLocation` for directory jumping. It records visited directories in a persistent local history file and accepts fuzzy history matches after a location has been visited. Use `Get-CleanCliLocationHistory` to inspect that history.
 

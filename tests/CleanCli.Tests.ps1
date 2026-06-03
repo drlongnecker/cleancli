@@ -57,6 +57,7 @@ Describe 'CleanCli installer script' {
             'DirectoryCache.ps1',
             'Git.ps1',
             'Icons.ps1',
+            'Listing.ps1',
             'Navigation.ps1',
             'Operations.ps1',
             'Profile.ps1',
@@ -146,7 +147,7 @@ Describe 'CleanCli module behavior' {
             $options.DirectoryGitStatusMode | Should Be 'disabled'
             $options.PathDisplayMode | Should Be 'auto'
             $options.PromptLayout | Should Be 'single'
-            $options.IconMode | Should Be 'disabled'
+            $options.IconMode | Should Be 'native'
             $options.CommandDurationThresholdMilliseconds | Should Be 2000
             $options.RightPrompt | Should Be $false
             $options.PromptSeparator | Should Be 'auto'
@@ -1063,6 +1064,7 @@ Describe 'CleanCli module behavior' {
         try {
             $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
             $env:CLEANCLI_TEST_PATH = $tempRoot
+            $env:CLEANCLI_TEST_LINK_CREATED = if ($linkCreated) { '1' } else { '0' }
             InModuleScope CleanCli {
                 Initialize-CleanCliOptions | Out-Null
                 Set-CleanCliOption -Name GitStatusMode -Value async | Out-Null
@@ -1371,7 +1373,7 @@ Describe 'CleanCli module behavior' {
     It 'compacts long home paths while preserving root and leaf context' {
         InModuleScope CleanCli {
             $home = [Environment]::GetFolderPath('UserProfile')
-            $path = Join-Path $home 'AppData\Roaming\nocturnal-souls-launcher\blob_storage\09064e10-8a6c-4c30-972c-f8980ebcfe86'
+            $path = Join-Path $home 'AppData\Roaming\cleancli-launcher\blob_storage\09064e10-8a6c-4c30-972c-f8980ebcfe86'
 
             $short = Get-CleanCliShortPath -Path $path
 
@@ -1626,9 +1628,46 @@ Describe 'CleanCli module behavior' {
             $bindings = Get-CleanCliKeyBindingsForPreset -Preset zsh
 
             ($bindings | Where-Object { $_.Key -eq 'Tab' }).Function | Should Be 'MenuComplete'
-            ($bindings | Where-Object { $_.Key -eq 'UpArrow' }).Function | Should Be 'HistorySearchBackward'
-            ($bindings | Where-Object { $_.Key -eq 'DownArrow' }).Function | Should Be 'HistorySearchForward'
-            ($bindings | Where-Object { $_.Key -eq 'RightArrow' }).Function | Should Be 'AcceptSuggestion'
+            ($bindings | Where-Object { $_.Key -eq 'UpArrow' }).Function | Should Be $null
+            ($bindings | Where-Object { $_.Key -eq 'UpArrow' }).ScriptBlock | Should Not Be $null
+            ($bindings | Where-Object { $_.Key -eq 'UpArrow' }).Description | Should Match 'cursor at the end'
+            ($bindings | Where-Object { $_.Key -eq 'DownArrow' }).Function | Should Be $null
+            ($bindings | Where-Object { $_.Key -eq 'DownArrow' }).ScriptBlock | Should Not Be $null
+            ($bindings | Where-Object { $_.Key -eq 'DownArrow' }).Description | Should Match 'cursor at the end'
+            ($bindings | Where-Object { $_.Key -eq 'RightArrow' }).Function | Should Be 'ForwardChar'
+            ($bindings | Where-Object { $_.Key -eq 'RightArrow' }).ScriptBlock | Should Be $null
+        }
+    }
+
+    It 'installs editable history and cursor navigation key handlers' {
+        if (-not (Get-Command Set-PSReadLineKeyHandler -ErrorAction SilentlyContinue)) {
+            Set-ItResult -Skipped -Because 'PSReadLine is not available in this host.'
+            return
+        }
+
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name KeyBindingPreset -Value zsh | Out-Null
+                Set-CleanCliPSReadLine
+            }
+
+            (Get-PSReadLineKeyHandler -Key RightArrow).Function | Should Be 'ForwardChar'
+            (Get-PSReadLineKeyHandler -Key UpArrow).Function | Should Be 'CustomAction'
+            (Get-PSReadLineKeyHandler -Key UpArrow).Description | Should Match 'cursor at the end'
+            (Get-PSReadLineKeyHandler -Key DownArrow).Function | Should Be 'CustomAction'
+            (Get-PSReadLineKeyHandler -Key DownArrow).Description | Should Match 'cursor at the end'
+        }
+        finally {
+            InModuleScope CleanCli {
+                Restore-CleanCliPSReadLine
+            }
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
 
@@ -2147,6 +2186,400 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'filters directory listings by type flags and qualifier tokens' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'src') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
+        $linkCreated = $false
+        try {
+            New-Item -ItemType SymbolicLink -Path (Join-Path $tempRoot 'readme-link.md') -Target (Join-Path $tempRoot 'README.md') -ErrorAction Stop | Out-Null
+            $linkCreated = $true
+        }
+        catch {
+            $linkCreated = $false
+        }
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Extension md).Name | Should Be 'README.md'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Directory).Name | Should Be 'src'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.' -Extension md).Name | Should Be 'README.md'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '/').Name | Should Be 'src'
+
+                if ($env:CLEANCLI_TEST_LINK_CREATED -eq '1') {
+                    (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Symlink).Name | Should Be 'readme-link.md'
+                    (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '@').Name | Should Be 'readme-link.md'
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_LINK_CREATED -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'filters empty and non-empty directories with flags and zsh-style qualifiers' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'empty') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'full') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'full\child.txt') -Value 'child' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'file.txt') -Value 'file' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Directory -Empty).Name | Should Be 'empty'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Directory -NonEmpty).Name | Should Be 'full'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '/^F').Name | Should Be 'empty'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '/F').Name | Should Be 'full'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'treats qualifier-looking positional strings as current-directory filters' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'cleancli') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'cleanclip') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'other') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'clean-file.txt') -Value 'file' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path (Join-Path $env:CLEANCLI_TEST_PATH 'cleancli')).Count | Should Be 0
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    (Get-CleanCliChildItem '/clea*' | Sort-Object Name).Name -join ',' | Should Be 'cleancli,cleanclip'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'supports explicit and implicit qualifiers beyond directory filtering' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'recent.txt') -Value 'recent' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'old.txt') -Value 'old' -Encoding ASCII
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastAccessTime = (Get-Date).AddDays(-5)
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.a+2').Name | Should Be 'old.txt'
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    (Get-CleanCliChildItem '.a+2').Name | Should Be 'old.txt'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'combines file and directory type qualifiers with later filters' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $oldDir = Join-Path $tempRoot 'old-dir'
+        $newDir = Join-Path $tempRoot 'new-dir'
+        New-Item -ItemType Directory -Path $oldDir | Out-Null
+        New-Item -ItemType Directory -Path $newDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'old.txt') -Value 'old' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'new.txt') -Value 'new' -Encoding ASCII
+        (Get-Item -LiteralPath $oldDir).LastAccessTime = (Get-Date).AddDays(-5)
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastAccessTime = (Get-Date).AddDays(-5)
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier './a+2' | Sort-Object Name).Name -join ',' | Should Be 'old-dir,old.txt'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'treats trailing qualifier-looking text as a name glob when it is not a valid token' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot '.config') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot '.empty') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'normal') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot '.config\settings.json') -Value '{}' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot '.dot-file') -Value 'file' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'module.ps1') -Value 'module' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '/F.*').Name | Should Be '.config'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '..*').Name | Should Be '.dot-file'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.module*').Name | Should Be 'module.ps1'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'filters directory listings by modified, accessed, and size shortcuts' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'recent.txt') -Value 'recent' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'old.txt') -Value 'old' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'large.bin') -Value ('x' * 2048) -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'tiny.bin') -Value 'x' -Encoding ASCII
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastWriteTime = (Get-Date).AddDays(-10)
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastAccessTime = (Get-Date).AddDays(-10)
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -ModifiedWithin 7d -NameLike '*.txt').Name | Should Be 'recent.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -ModifiedBefore 7d).Name | Should Be 'old.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Qualifier '.m-7' -NameLike '*.txt').Name | Should Be 'recent.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Qualifier '.m+7').Name | Should Be 'old.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Qualifier '.mm-30' -NameLike 'recent.txt').Name | Should Be 'recent.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Qualifier '.m-70m' -NameLike 'recent.txt').Name | Should Be 'recent.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -AccessedBefore 7d).Name | Should Be 'old.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -LargerThan 1kb -NameLike '*.bin').Name | Should Be 'large.bin'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -SmallerThan 10b -NameLike '*.bin' | Sort-Object Name).Name -join ',' | Should Be 'tiny.bin'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.L+1k' -NameLike '*.bin').Name | Should Be 'large.bin'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.L-10' -NameLike '*.bin' | Sort-Object Name).Name -join ',' | Should Be 'tiny.bin'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'parses every documented listing qualifier example in the README' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'cleancli') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'cleanclip') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'src') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot '.config') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'src\child.txt') -Value 'child' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot '.config\settings.json') -Value '{}' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'script.ps1') -Value 'script' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'module.psm1') -Value 'module' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'tiny.bin') -Value 'x' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'old.txt') -Value 'old' -Encoding ASCII
+        $largeStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'large.bin'))
+        try {
+            $largeStream.SetLength(11MB)
+        }
+        finally {
+            $largeStream.Dispose()
+        }
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastWriteTime = (Get-Date).AddDays(-10)
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastAccessTime = (Get-Date).AddDays(-10)
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            $env:CLEANCLI_TEST_README = Join-Path $ProjectRoot 'README.md'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                $readmeText = Get-Content -LiteralPath $env:CLEANCLI_TEST_README -Raw
+                $section = [regex]::Match($readmeText, '(?s)### Listing Filters and Qualifiers(?<body>.*?)## Key Bindings').Groups['body'].Value
+                $quotedQualifiers = @([regex]::Matches($section, 'ls(?:\s+-File)?(?:\s+-Extension\s+psm1)?\s+-Qualifier\s+"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+                $implicitQualifiers = @([regex]::Matches($section, 'ls\s+"([^"]+)"') | ForEach-Object { $_.Groups[1].Value })
+
+                foreach ($qualifier in @($quotedQualifiers | Select-Object -Unique)) {
+                    { Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier $qualifier | Out-Null } | Should Not Throw
+                }
+
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    foreach ($qualifier in @($implicitQualifiers | Select-Object -Unique)) {
+                        { Get-CleanCliChildItem $qualifier | Out-Null } | Should Not Throw
+                    }
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_README -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'sorts and slices directory listings with flags and qualifier strings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'a.txt') -Value 'a' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'b.txt') -Value ('b' * 20) -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'c.txt') -Value ('c' * 200) -Encoding ASCII
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'a.txt')).LastWriteTime = (Get-Date).AddMinutes(-30)
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'b.txt')).LastWriteTime = (Get-Date).AddMinutes(-20)
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'c.txt')).LastWriteTime = (Get-Date).AddMinutes(-10)
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Extension txt -Sort modified -Descending -First 2).Name -join ',' | Should Be 'c.txt,b.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -File -Extension txt -Sort name -Descending -Last 1).Name | Should Be 'a.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.OL[1,2]' -Extension txt).Name -join ',' | Should Be 'c.txt,b.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.on[2,3]').Name -join ',' | Should Be 'b.txt,c.txt'
+                (Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.OL[1,3]' -Sort name -First 1).Name | Should Be 'a.txt'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'combines listing filters while preserving native icon item formatting' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'README.md') -Value '# test' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'notes.txt') -Value 'notes' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+
+                $item = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.m-1' -Extension md
+
+                $item.Name | Should Be 'README.md'
+                $item.PSObject.TypeNames[0] | Should Be 'CleanCli.IconItem'
+                $item.DisplayName | Should Match 'README.md'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'throws clear errors for malformed or unsupported listing qualifiers' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                { Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '%' } | Should Throw "Unsupported ls qualifier '%'"
+                { Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.m-' } | Should Throw "must include a number"
+                { Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Qualifier '.on[1,2' } | Should Throw "missing ']'"
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'resolves zsh-style listing qualifiers through the ls alias in a fresh shell' {
+        $powerShellPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $powerShellPath) {
+            Set-ItResult -Skipped -Because 'pwsh is not available in this host.'
+            return
+        }
+
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'fresh.txt') -Value 'fresh' -Encoding ASCII
+        $configPath = Join-Path $env:TEMP "CleanCli.$([guid]::NewGuid().ToString('N')).config.psd1"
+        Set-Content -LiteralPath $configPath -Value "@{ IconMode = 'native'; DirectoryReadAheadMode = 'disabled' }" -Encoding ASCII
+
+        try {
+            $command = @"
+`$env:CLEANCLI_CONFIG_PATH = '$($configPath.Replace("'", "''"))'
+Import-Module '$($ModulePath.Replace("'", "''"))' -Force
+Enable-CleanCli
+Set-Location '$($tempRoot.Replace("'", "''"))'
+(ls -Qualifier '.m-7' | Select-Object -ExpandProperty Name) -join ','
+"@
+
+            $output = & $powerShellPath -NoProfile -Command $command
+
+            ($output | Select-Object -Last 1) | Should Be 'fresh.txt'
+        }
+        finally {
+            Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'uses supported native glyphs for common special directories' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         foreach ($name in @('.cache', '.config', '.docker', '.vscode', 'Contacts', 'Desktop', 'Documents', 'Downloads', 'Music')) {
@@ -2265,6 +2698,38 @@ Describe 'CleanCli module behavior' {
             InModuleScope CleanCli {
                 Initialize-CleanCliOptions | Out-Null
                 Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliIconAliases
+            }
+
+            (Get-Alias ls -Scope Global).Definition | Should Be 'Get-CleanCliChildItem'
+            (Get-Alias dir -Scope Global).Definition | Should Be 'Get-CleanCliChildItem'
+        }
+        finally {
+            InModuleScope CleanCli {
+                Restore-CleanCliIconAliases
+            }
+            if ($originalLs) {
+                Set-Alias -Name ls -Value $originalLs -Scope Global -Force
+            }
+            if ($originalDir) {
+                Set-Alias -Name dir -Value $originalDir -Scope Global -Option AllScope -Force
+            }
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'routes ls and dir through CleanCli when icon mode is disabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $originalLs = (Get-Alias ls -ErrorAction SilentlyContinue).Definition
+        $originalDir = (Get-Alias dir -ErrorAction SilentlyContinue).Definition
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
                 Set-CleanCliIconAliases
             }
 
@@ -2924,6 +3389,14 @@ Describe 'CleanCli module behavior' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tempRoot | Out-Null
         Set-Content -LiteralPath (Join-Path $tempRoot 'hosts') -Value '127.0.0.1 localhost' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'small.log') -Value 'small' -Encoding ASCII
+        $largeStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'large.log'))
+        try {
+            $largeStream.SetLength(101KB)
+        }
+        finally {
+            $largeStream.Dispose()
+        }
 
         try {
             $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
@@ -2934,11 +3407,17 @@ Describe 'CleanCli module behavior' {
 
             $text = Get-CleanCliChildItem -Path $tempRoot | Out-String
 
-            $text | Should Not Match 'Mode\s+LastWriteTime\s+Length\s+Name'
+            $text | Should Match 'Mode\s+LastWriteTime\s+Length\s+Name'
             $text | Should Match '-a---\s+\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}'
             $text | Should Match 'hosts'
             $text | Should Not Match 'DisplayName\s+:'
             $text | Should Not Match 'FullName\s+:'
+
+            $filteredText = Get-CleanCliChildItem -Path $tempRoot -Qualifier '.L+100kOL*.log' | Out-String
+
+            $filteredText | Should Match 'Mode\s+LastWriteTime\s+Length\s+Name'
+            $filteredText | Should Match 'large\.log'
+            $filteredText | Should Not Match 'small\.log'
         }
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue

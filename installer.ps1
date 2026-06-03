@@ -16,6 +16,7 @@ $moduleFiles = @(
     'DirectoryCache.ps1',
     'Git.ps1',
     'Icons.ps1',
+    'Listing.ps1',
     'Navigation.ps1',
     'Operations.ps1',
     'Profile.ps1',

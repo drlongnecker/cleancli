@@ -66,7 +66,7 @@ $script:CleanCliDefaultOptions = [ordered]@{
     DirectoryGitStatusMode = 'disabled'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'
-    IconMode = 'disabled'
+    IconMode = 'native'
     CommandDurationThresholdMilliseconds = 2000
     RightPrompt = $false
     PromptSeparator = 'auto'
@@ -100,6 +100,7 @@ $script:CleanCliSlowGitRepositories = @{}
 . (Join-Path $script:CleanCliRoot 'DirectoryCache.ps1')
 . (Join-Path $script:CleanCliRoot 'Prompt.ps1')
 . (Join-Path $script:CleanCliRoot 'PSReadLine.ps1')
+. (Join-Path $script:CleanCliRoot 'Listing.ps1')
 . (Join-Path $script:CleanCliRoot 'Icons.ps1')
 . (Join-Path $script:CleanCliRoot 'Navigation.ps1')
 . (Join-Path $script:CleanCliRoot 'Operations.ps1')

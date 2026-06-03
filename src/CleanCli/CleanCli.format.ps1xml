@@ -7,7 +7,6 @@
         <TypeName>CleanCli.IconItem</TypeName>
       </ViewSelectedBy>
       <TableControl>
-        <HideTableHeaders/>
         <TableHeaders>
           <TableColumnHeader>
             <Label>Mode</Label>
