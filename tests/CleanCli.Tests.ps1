@@ -2445,6 +2445,116 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'filters recursive listings with compact qualifiers' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'logs') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'src') | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'logs\small.log') -Value 'small' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'src\large.txt') -Value 'large' -Encoding ASCII
+        $largeStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'logs\large.log'))
+        try {
+            $largeStream.SetLength(101KB)
+        }
+        finally {
+            $largeStream.Dispose()
+        }
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Recurse -Qualifier '.L+100k*.log'
+
+                $items.Count | Should Be 1
+                $items[0].Name | Should Be 'large.log'
+                $items[0].PSObject.TypeNames[0] | Should Not Be 'CleanCli.IconItem'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'applies recursive directory selectors to the intended directory level' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'tmp-root') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'test\tmp') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'something\tmp2') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'other') | Out-Null
+        foreach ($name in @('tmp-root\root.log', 'test\tmp\nested.log', 'something\tmp2\deep.log', 'other\skip.log')) {
+            $stream = [System.IO.File]::OpenWrite((Join-Path $tempRoot $name))
+            try {
+                $stream.SetLength(101KB)
+            }
+            finally {
+                $stream.Dispose()
+            }
+        }
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                $topLevel = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Recurse -RecurseDirectory 'tmp*' -Qualifier '.L+100k*.log'
+                $anyLevel = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH -Recurse -RecurseDirectory '*/tmp*' -Qualifier '.L+100k*.log' | Sort-Object Name
+
+                $topLevel.Name | Should Be 'root.log'
+                ($anyLevel.Name -join ',') | Should Be 'deep.log,nested.log,root.log'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'uses the second recursive positional argument as the item filter' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'tmp-root') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'test\tmp') | Out-Null
+        $rootStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'tmp-root\root.log'))
+        $nestedStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'test\tmp\nested.log'))
+        try {
+            $rootStream.SetLength(101KB)
+            $nestedStream.SetLength(101KB)
+        }
+        finally {
+            $rootStream.Dispose()
+            $nestedStream.Dispose()
+        }
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    (Get-CleanCliChildItem -r '*/tmp*' '.L+100k*.log' | Sort-Object Name).Name -join ',' | Should Be 'nested.log,root.log'
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'parses every documented listing qualifier example in the README' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path (Join-Path $tempRoot 'cleancli') | Out-Null
@@ -2612,6 +2722,48 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
             $output = & $powerShellPath -NoProfile -Command $command
 
             ($output | Select-Object -Last 1) | Should Be 'fresh.txt'
+        }
+        finally {
+            Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'resolves recursive listing filters through the ls alias in a fresh shell' {
+        $powerShellPath = (Get-Command pwsh -ErrorAction SilentlyContinue).Source
+        if (-not $powerShellPath) {
+            Set-ItResult -Skipped -Because 'pwsh is not available in this host.'
+            return
+        }
+
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'tmp-root') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'test\tmp') | Out-Null
+        $rootStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'tmp-root\root.log'))
+        $nestedStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'test\tmp\nested.log'))
+        try {
+            $rootStream.SetLength(101KB)
+            $nestedStream.SetLength(101KB)
+        }
+        finally {
+            $rootStream.Dispose()
+            $nestedStream.Dispose()
+        }
+        $configPath = Join-Path $env:TEMP "CleanCli.$([guid]::NewGuid().ToString('N')).config.psd1"
+        Set-Content -LiteralPath $configPath -Value "@{ IconMode = 'native'; DirectoryReadAheadMode = 'disabled' }" -Encoding ASCII
+
+        try {
+            $command = @"
+`$env:CLEANCLI_CONFIG_PATH = '$($configPath.Replace("'", "''"))'
+Import-Module '$($ModulePath.Replace("'", "''"))' -Force
+Enable-CleanCli
+Set-Location '$($tempRoot.Replace("'", "''"))'
+(ls -r '*/tmp*' '.L+100k*.log' | Sort-Object Name | Select-Object -ExpandProperty Name) -join ','
+"@
+
+            $output = & $powerShellPath -NoProfile -Command $command
+
+            ($output | Select-Object -Last 1) | Should Be 'nested.log,root.log'
         }
         finally {
             Remove-Item -LiteralPath $configPath -Force -ErrorAction SilentlyContinue
@@ -3462,12 +3614,16 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
         New-Item -ItemType Directory -Path $tempRoot | Out-Null
         Set-Content -LiteralPath (Join-Path $tempRoot 'hosts') -Value '127.0.0.1 localhost' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $tempRoot 'small.log') -Value 'small' -Encoding ASCII
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'logs') | Out-Null
         $largeStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'large.log'))
+        $recursiveStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'logs\recursive.log'))
         try {
             $largeStream.SetLength(101KB)
+            $recursiveStream.SetLength(101KB)
         }
         finally {
             $largeStream.Dispose()
+            $recursiveStream.Dispose()
         }
 
         try {
@@ -3490,6 +3646,20 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
             $filteredText | Should Match 'Mode\s+LastWriteTime\s+Length\s+Name'
             $filteredText | Should Match 'large\.log'
             $filteredText | Should Not Match 'small\.log'
+
+            $recursiveText = Get-CleanCliChildItem -Path $tempRoot -Recurse -Qualifier '.L+100k*.log' | Out-String
+
+            $recursiveText | Should Match ([regex]::Escape("Directory: $(Join-Path $tempRoot 'logs')"))
+            $recursiveText | Should Match 'Mode\s+LastWriteTime\s+Length\s+Name'
+            $recursiveText | Should Match 'recursive\.log'
+
+            $recursiveItem = Get-CleanCliChildItem -Path $tempRoot -Recurse -Qualifier '.L+100k*.log' |
+                Where-Object Name -eq 'recursive.log'
+            $recursiveItem.PSObject.TypeNames[0] | Should Be 'CleanCli.IconItem.Recursive'
+            $recursiveItem.PSObject.TypeNames[1] | Should Be 'CleanCli.IconItem'
+            $recursiveItem.Name | Should Be 'recursive.log'
+            $recursiveItem.FullName | Should Be (Join-Path $tempRoot 'logs\recursive.log')
+            $recursiveItem.Directory | Should Be (Join-Path $tempRoot 'logs')
         }
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue

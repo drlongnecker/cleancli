@@ -182,6 +182,110 @@ function Resolve-CleanCliListingInput {
     }
 }
 
+function Get-CleanCliChildItemLiteral {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [switch]$Force,
+        [switch]$Recurse,
+        [int]$Depth = -1,
+        [switch]$Directory
+    )
+
+    $parameters = @{
+        LiteralPath = $Path
+    }
+    if ($Force) { $parameters.Force = $true }
+    if ($Recurse) { $parameters.Recurse = $true }
+    if ($Directory) { $parameters.Directory = $true }
+    if ($Recurse -and $Depth -ge 0) { $parameters.Depth = $Depth }
+
+    @(Get-ChildItem @parameters)
+}
+
+function Get-CleanCliRelativeListingPath {
+    param(
+        [Parameter(Mandatory)]
+        [string]$RootPath,
+        [Parameter(Mandatory)]
+        [string]$Path
+    )
+
+    $root = [System.IO.Path]::GetFullPath($RootPath).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ($full.Length -le $root.Length) {
+        return './'
+    }
+
+    $relative = $full.Substring($root.Length).TrimStart([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+    "./$($relative.Replace('\', '/'))"
+}
+
+function Get-CleanCliRecursiveSearchDirectory {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [switch]$Force,
+        [int]$Depth = -1,
+        [string]$RecurseDirectory
+    )
+
+    if (-not $RecurseDirectory) {
+        return @([pscustomobject]@{
+            FullName = (Resolve-Path -LiteralPath $Path).ProviderPath
+            SearchDepth = $Depth
+        })
+    }
+
+    $selector = $RecurseDirectory.Replace('\', '/')
+    $hasPathSelector = $selector.IndexOf('/') -ge 0
+    $directories = if ($hasPathSelector) {
+        Get-CleanCliChildItemLiteral -Path $Path -Force:$Force -Recurse -Depth $Depth -Directory
+    }
+    else {
+        Get-CleanCliChildItemLiteral -Path $Path -Force:$Force -Directory
+    }
+
+    foreach ($directory in $directories) {
+        $matched = if ($hasPathSelector) {
+            (Get-CleanCliRelativeListingPath -RootPath $Path -Path $directory.FullName) -like $selector
+        }
+        else {
+            $directory.Name -like $selector
+        }
+
+        if ($matched) {
+            [pscustomobject]@{
+                FullName = $directory.FullName
+                SearchDepth = 0
+            }
+        }
+    }
+}
+
+function Get-CleanCliListingItems {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Path,
+        [switch]$Force,
+        [switch]$Recurse,
+        [int]$Depth = -1,
+        [string]$RecurseDirectory
+    )
+
+    if (-not $Recurse) {
+        return Get-CleanCliChildItemLiteral -Path $Path -Force:$Force
+    }
+
+    $directories = @(Get-CleanCliRecursiveSearchDirectory -Path $Path -Force:$Force -Depth $Depth -RecurseDirectory $RecurseDirectory)
+    $items = foreach ($directory in $directories) {
+        $searchDepth = [int]$directory.SearchDepth
+        Get-CleanCliChildItemLiteral -Path $directory.FullName -Force:$Force -Recurse:($searchDepth -ne 0) -Depth $searchDepth
+    }
+
+    @($items)
+}
+
 function Merge-CleanCliListingQuery {
     param(
         [System.Collections.IDictionary]$Target,

@@ -395,7 +395,8 @@ function ConvertTo-CleanCliIconItem {
     param(
         [System.IO.FileSystemInfo]$Item,
         [string]$IconMode,
-        [object]$Metadata
+        [object]$Metadata,
+        [switch]$Recursive
     )
 
     $icon = if ($IconMode -eq 'ascii') {
@@ -434,8 +435,12 @@ function ConvertTo-CleanCliIconItem {
         GitStatusDurationMilliseconds = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.GitStatusDurationMilliseconds } else { 0 }
         DisplayName = $displayName
         FullName = $Item.FullName
+        Directory = if ($Item.DirectoryName) { $Item.DirectoryName } else { $Item.FullName }
     }
     $result.PSObject.TypeNames.Insert(0, 'CleanCli.IconItem')
+    if ($Recursive) {
+        $result.PSObject.TypeNames.Insert(0, 'CleanCli.IconItem.Recursive')
+    }
     $result
 }
 
@@ -443,7 +448,10 @@ function Invoke-CleanCliTerminalIconsChildItem {
     param(
         [string]$Path,
         [switch]$Force,
-        [object]$Query
+        [object]$Query,
+        [switch]$Recurse,
+        [int]$Depth = -1,
+        [string]$RecurseDirectory
     )
 
     if (-not (Get-Command Format-TerminalIcons -ErrorAction SilentlyContinue)) {
@@ -453,31 +461,28 @@ function Invoke-CleanCliTerminalIconsChildItem {
     }
 
     if (Get-Command Format-TerminalIcons -ErrorAction SilentlyContinue) {
-        $items = if ($Force) {
-            @(Get-ChildItem -LiteralPath $Path -Force)
-        }
-        else {
-            @(Get-ChildItem -LiteralPath $Path)
-        }
+        $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
         return (Invoke-CleanCliListingQuery -Items $items -Query $Query) | Format-TerminalIcons
     }
 
-    $items = if ($Force) {
-        @(Get-ChildItem -LiteralPath $Path -Force)
-    }
-    else {
-        @(Get-ChildItem -LiteralPath $Path)
-    }
+    $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
     Invoke-CleanCliListingQuery -Items $items -Query $Query | ForEach-Object {
-        ConvertTo-CleanCliIconItem -Item $_ -IconMode native
+        ConvertTo-CleanCliIconItem -Item $_ -IconMode native -Recursive:$Recurse
     }
 }
 
 function Get-CleanCliChildItem {
     [CmdletBinding()]
     param(
+        [Parameter(Position = 0)]
         [string]$Path = '.',
+        [Parameter(Position = 1)]
+        [string]$RecurseFilter,
         [switch]$Force,
+        [Alias('r')]
+        [switch]$Recurse,
+        [int]$Depth = -1,
+        [string]$RecurseDirectory,
         [switch]$File,
         [switch]$Directory,
         [switch]$Symlink,
@@ -498,6 +503,22 @@ function Get-CleanCliChildItem {
         [int]$Last,
         [string]$Qualifier
     )
+
+    if ($RecurseFilter -and -not $Recurse) {
+        throw "A second positional listing filter is only supported with -Recurse."
+    }
+    if ($RecurseDirectory -and -not $Recurse) {
+        throw "-RecurseDirectory requires -Recurse."
+    }
+    if ($RecurseFilter) {
+        if ($Qualifier) {
+            throw "Use either a second positional recursive filter or -Qualifier, not both."
+        }
+
+        $RecurseDirectory = $Path
+        $Path = '.'
+        $Qualifier = $RecurseFilter
+    }
 
     $input = Resolve-CleanCliListingInput -Path $Path -Qualifier $Qualifier
     $Path = $input.Path
@@ -527,14 +548,8 @@ function Get-CleanCliChildItem {
 
     $iconMode = Get-CleanCliIconMode
     if ($iconMode -eq 'disabled') {
-        if ($query.HasCriteria) {
-            $items = if ($Force) {
-                @(Get-ChildItem -LiteralPath $Path -Force)
-            }
-            else {
-                @(Get-ChildItem -LiteralPath $Path)
-            }
-
+        if ($query.HasCriteria -or $Recurse -or $RecurseDirectory) {
+            $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
             return Invoke-CleanCliListingQuery -Items $items -Query $query
         }
 
@@ -546,27 +561,26 @@ function Get-CleanCliChildItem {
     }
 
     if ($iconMode -eq 'terminal-icons') {
-        return Invoke-CleanCliTerminalIconsChildItem -Path $Path -Force:$Force -Query $query
+        return Invoke-CleanCliTerminalIconsChildItem -Path $Path -Force:$Force -Query $query -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
     }
 
-    Receive-CleanCliDirectoryReadAhead
-    $items = if ($Force) {
-        @(Get-ChildItem -LiteralPath $Path -Force)
+    if (-not $Recurse -and -not $RecurseDirectory) {
+        Receive-CleanCliDirectoryReadAhead
     }
-    else {
-        @(Get-ChildItem -LiteralPath $Path)
-    }
+    $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
 
     $filteredItems = Invoke-CleanCliListingQuery -Items $items -Query $query
     $result = foreach ($item in $filteredItems) {
         $metadata = $null
-        if ($item.PSIsContainer) {
+        if ($item.PSIsContainer -and -not $Recurse -and -not $RecurseDirectory) {
             $metadata = Get-CleanCliDirectoryMetadataForPath -Path $item.FullName
         }
 
-        ConvertTo-CleanCliIconItem -Item $item -IconMode $iconMode -Metadata $metadata
+        ConvertTo-CleanCliIconItem -Item $item -IconMode $iconMode -Metadata $metadata -Recursive:$Recurse
     }
 
-    Start-CleanCliDirectoryReadAhead -Path $Path
+    if (-not $Recurse -and -not $RecurseDirectory) {
+        Start-CleanCliDirectoryReadAhead -Path $Path
+    }
     return $result
 }

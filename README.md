@@ -223,6 +223,8 @@ ls ..*                  # implicit qualifier: lists dotfiles such as .gitignore
 ls /.*                  # implicit qualifier: lists dot directories such as .config
 ls -Qualifier .m-7      # explicit qualifier: lists files modified within the last 7 days
 ls .a+2                 # implicit qualifier: lists files accessed more than 2 days ago
+ls -r .L+100k*.log      # recursive qualifier: lists .log files larger than 100 KB
+ls -r */tmp* .L+100k*.log # recursive directory filter plus file qualifier
 ```
 
 | Goal | PowerShell flags | zsh-style qualifier | Notes |
@@ -286,6 +288,14 @@ Useful combinations:
 | Largest five files in the current directory | `ls -File -Sort size -Descending -First 5` | `ls -Qualifier '.OL[1,5]'` |
 | Files modified in the last week, newest first | `ls -File -ModifiedWithin 7d -Sort modified -Descending` | `ls -Qualifier .m-7Om` |
 | Directory names starting with `clea` | `ls -Directory -NameLike clea*` | `ls /clea*` |
+
+Recursive listings use `-Recurse` or `-r`. Without a directory selector, the item qualifier applies across the full tree. With a directory selector, CleanCli first finds matching directories, then applies the item qualifier to files directly inside those directories. A selector without a slash, such as `tmp*`, only matches top-level directories. A selector with a slash, such as `*/tmp*` or `*/extensions*`, is matched against `./relative/path`, so it can match top-level and nested directories. Recursive icon listings group results by directory while keeping `Name` and `FullName` available for pipeline commands.
+
+| Goal | PowerShell flags | zsh-style qualifier |
+| --- | --- | --- |
+| Recursive .log files larger than 100 KB | `ls -Recurse -File -LargerThan 100kb -NameLike *.log` | `ls -r .L+100k*.log` |
+| Large .log files in top-level tmp folders | `ls -Recurse -RecurseDirectory tmp* -Qualifier .L+100k*.log` | `ls -r tmp* .L+100k*.log` |
+| Large .log files in any tmp folder | `ls -Recurse -RecurseDirectory '*/tmp*' -Qualifier .L+100k*.log` | `ls -r */tmp* .L+100k*.log` |
 
 ## Key Bindings
 
