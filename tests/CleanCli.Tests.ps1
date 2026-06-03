@@ -142,6 +142,7 @@ Describe 'CleanCli module behavior' {
             $options.DirectoryMetadataCacheMilliseconds | Should Be 5000
             $options.DirectoryReadAheadMaxDirectories | Should Be 64
             $options.DirectoryReadAheadDebounceMilliseconds | Should Be 250
+            $options.DirectoryAlwaysShowGitBranches | Should Be $true
             $options.DirectoryGitStatusMode | Should Be 'disabled'
             $options.PathDisplayMode | Should Be 'auto'
             $options.PromptLayout | Should Be 'single'
@@ -2502,7 +2503,7 @@ Describe 'CleanCli module behavior' {
         }
     }
 
-    It 'does not render expired branch metadata before refresh' {
+    It 'refreshes expired branch metadata during directory listings by default' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         $repo = Join-Path $tempRoot 'repo'
         $gitDir = Join-Path $repo '.git'
@@ -2517,6 +2518,39 @@ Describe 'CleanCli module behavior' {
                 Set-CleanCliOption -Name IconMode -Value native | Out-Null
                 Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
                 Set-CleanCliOption -Name DirectoryMetadataCacheMilliseconds -Value 1 | Out-Null
+                $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+                Start-Sleep -Milliseconds 20
+
+                $second = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $first.GitBranch | Should Be 'main'
+                $second.GitBranch | Should Be 'main'
+                $second.DisplayName | Should Match '\[main\]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'can opt out of inline git branch refresh for expired directory metadata' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+                Set-CleanCliOption -Name DirectoryMetadataCacheMilliseconds -Value 1 | Out-Null
+                Set-CleanCliOption -Name DirectoryAlwaysShowGitBranches -Value $false | Out-Null
                 $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
                 Start-Sleep -Milliseconds 20
 
@@ -2565,7 +2599,7 @@ Describe 'CleanCli module behavior' {
                 $third = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
 
                 $first.GitBranch | Should Be 'main'
-                $second.GitBranch | Should Be ''
+                $second.GitBranch | Should Be 'feature'
                 $third.GitBranch | Should Be 'feature'
             }
         }

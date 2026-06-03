@@ -317,7 +317,9 @@ function Get-CleanCliDirectoryMetadataForPath {
 
     if ($cached) {
         $script:CleanCliDirectoryMetadataCache.Remove($fullPath)
-        return $null
+        if (-not $script:CleanCliOptions.DirectoryAlwaysShowGitBranches) {
+            return $null
+        }
     }
 
     $metadata = Get-CleanCliDirectoryMetadataInline -Path $fullPath -DataSource inline

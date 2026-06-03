@@ -62,6 +62,7 @@ $script:CleanCliDefaultOptions = [ordered]@{
     DirectoryMetadataCacheMilliseconds = 5000
     DirectoryReadAheadMaxDirectories = 64
     DirectoryReadAheadDebounceMilliseconds = 250
+    DirectoryAlwaysShowGitBranches = $true
     DirectoryGitStatusMode = 'disabled'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'

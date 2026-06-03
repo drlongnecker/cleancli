@@ -66,6 +66,13 @@ Example:
     GitIgnoreSubmodules = 'none'
     GitStatusMode = 'full'
     GitDivergenceMode = 'none'
+    DirectoryReadAheadMode = 'metadata'
+    DirectoryReadAheadDepth = 1
+    DirectoryMetadataCacheMilliseconds = 5000
+    DirectoryReadAheadMaxDirectories = 64
+    DirectoryReadAheadDebounceMilliseconds = 250
+    DirectoryAlwaysShowGitBranches = $true
+    DirectoryGitStatusMode = 'disabled'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'
     IconMode = 'disabled'
@@ -197,9 +204,9 @@ The bundled profile does not import `Terminal-Icons` at startup. When `IconMode 
 
 CleanCli native icons avoid known legacy Nerd Font codepoints from old Terminal-Icons `nf-mdi-*` mappings that can render as invalid symbols in current fonts.
 
-When icon mode is `native` or `ascii`, CleanCli can enrich directory listings with fresh git repository metadata. Repository folders render with a distinct marker, blue-cyan repo color, and branch suffix, for example `repo [main]` or `[G] repo [main]` in ASCII mode. CleanCli never uses cached directory entries as listing output; `Get-ChildItem` still reads the current directory every time, and stale branch or status metadata is dropped instead of rendered.
+When icon mode is `native` or `ascii`, CleanCli can enrich directory listings with fresh git repository metadata. Repository folders render with a distinct marker, blue-cyan repo color, and branch suffix, for example `repo [main]` or `[G] repo [main]` in ASCII mode. CleanCli never uses cached directory entries as listing output; `Get-ChildItem` still reads the current directory every time. `DirectoryAlwaysShowGitBranches = $true` is the default and refreshes branch metadata inline when needed so repository branch suffixes do not disappear between `ls` calls. Set it to `$false` to only use fresh cached or read-ahead metadata.
 
-Directory metadata read-ahead is controlled by `DirectoryReadAheadMode`, `DirectoryReadAheadDepth`, `DirectoryMetadataCacheMilliseconds`, `DirectoryReadAheadMaxDirectories`, `DirectoryReadAheadDebounceMilliseconds`, and `DirectoryGitStatusMode`. The default keeps repository listings branch-only. Set `DirectoryGitStatusMode = 'async'` to opt into background `git status --porcelain --branch` calls that add clean/pending/dirty colors and compact counts such as `repo [main ahead 2 ?1 +1 ~1 -1]` after the async cache refresh completes.
+Directory metadata read-ahead is controlled by `DirectoryReadAheadMode`, `DirectoryReadAheadDepth`, `DirectoryMetadataCacheMilliseconds`, `DirectoryReadAheadMaxDirectories`, `DirectoryReadAheadDebounceMilliseconds`, `DirectoryAlwaysShowGitBranches`, and `DirectoryGitStatusMode`. The default keeps repository listings branch-only. Set `DirectoryGitStatusMode = 'async'` to opt into background `git status --porcelain --branch` calls that add clean/pending/dirty colors and compact counts such as `repo [main ahead 2 ?1 +1 ~1 -1]` after the async cache refresh completes.
 
 ## Key Bindings
 

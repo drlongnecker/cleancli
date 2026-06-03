@@ -102,6 +102,7 @@ function ConvertTo-CleanCliOptionValue {
         { $_ -in @('DirectoryReadAheadDepth', 'DirectoryMetadataCacheMilliseconds', 'DirectoryReadAheadMaxDirectories', 'DirectoryReadAheadDebounceMilliseconds') } {
             return [int]$Value
         }
+        'DirectoryAlwaysShowGitBranches' { return [bool]$Value }
         'PathDisplayMode' {
             $mode = [string]$Value
             if ($mode -notin @('full', 'compact', 'auto')) {
