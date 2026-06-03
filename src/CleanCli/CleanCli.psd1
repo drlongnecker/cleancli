@@ -20,7 +20,10 @@
         'Get-CleanCliLocationHistory',
         'Open-CleanCliExplorer',
         'Show-CleanCliGitLog',
-        'Install-CleanCli'
+        'Install-CleanCli',
+        'Get-CleanCliProfile',
+        'New-CleanCliMachineProfile',
+        'Set-CleanCliMachineProfile'
     )
     CmdletsToExport = @()
     VariablesToExport = @()

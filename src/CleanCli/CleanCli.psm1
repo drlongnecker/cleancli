@@ -19,6 +19,16 @@ $script:CleanCliState = [ordered]@{
     LoadReason = ''
     StartedAt = [datetime]::Now
 }
+$script:CleanCliProfileState = [ordered]@{
+    Identifier = $null
+    ProfileName = $null
+    Mapped = $false
+    ProfilesPath = $null
+    MasterSettings = [ordered]@{}
+    ProfileSettings = [ordered]@{}
+}
+$script:CleanCliProfilePromptReader = $null
+$script:CleanCliMachineIdentifierOverride = $null
 $script:CleanCliGitCache = @{}
 $script:CleanCliGitLastSuccessful = @{}
 $script:CleanCliGitAsyncRefreshes = @{}
@@ -92,6 +102,7 @@ function Enable-CleanCli {
         return
     }
 
+    Invoke-CleanCliProfileSetupPrompt
     Set-CleanCliPSReadLine
     Set-CleanCliIconAliases
     Set-Item -Path Function:\global:prompt -Value {
@@ -138,6 +149,10 @@ function Get-CleanCliStatus {
         GitTimeoutMilliseconds = $script:CleanCliGitTimeoutMilliseconds
         GitProcessCount = $script:CleanCliState.LastGitProcessCount
         AsciiMode = $env:CLEANCLI_ASCII -eq '1'
+        ProfileIdentifier = $script:CleanCliProfileState.Identifier
+        ProfileName = $script:CleanCliProfileState.ProfileName
+        ProfileMapped = [bool]$script:CleanCliProfileState.Mapped
+        ProfilesPath = $script:CleanCliProfileState.ProfilesPath
         StartedAt = $script:CleanCliState.StartedAt
     }
 }
@@ -242,4 +257,4 @@ function Measure-CleanCliStartup {
     [pscustomobject]$result
 }
 
-Export-ModuleMember -Function Enable-CleanCli, Disable-CleanCli, Get-CleanCliStatus, Measure-CleanCliStartup, Get-CleanCliOption, Set-CleanCliOption, Get-CleanCliChildItem, Get-CleanCliIconDiagnostics, Set-CleanCliLocation, Get-CleanCliLocationHistory, Open-CleanCliExplorer, Show-CleanCliGitLog, Install-CleanCli
+Export-ModuleMember -Function Enable-CleanCli, Disable-CleanCli, Get-CleanCliStatus, Measure-CleanCliStartup, Get-CleanCliOption, Set-CleanCliOption, Get-CleanCliChildItem, Get-CleanCliIconDiagnostics, Set-CleanCliLocation, Get-CleanCliLocationHistory, Open-CleanCliExplorer, Show-CleanCliGitLog, Install-CleanCli, Get-CleanCliProfile, New-CleanCliMachineProfile, Set-CleanCliMachineProfile

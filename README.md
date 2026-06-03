@@ -103,6 +103,64 @@ Environment variables still override config for existing compatibility:
 - `CLEANCLI_TRANSIENT=1`
 - `CLEANCLI_NERD_FONT=1` to force native Nerd Font icon mode, or `CLEANCLI_NERD_FONT=0` to force Terminal-Icons compatibility mode when selected
 
+## Machine Profiles
+
+CleanCli can load a synced `CleanCli.profiles.psd1` file from `Documents\PowerShell` so the same module and profile can be copied across machines while each machine keeps the right local behavior.
+
+Load order:
+
+```text
+defaults
+-> CleanCli.profiles.psd1 Master
+-> matched machine profile
+-> CleanCli.config.psd1 project or user config
+-> environment variables
+```
+
+Example:
+
+```powershell
+@{
+    Master = @{
+        IconMode = 'native'
+        KeyBindingPreset = 'zsh'
+    }
+
+    Identifiers = @{
+        'JOYEUSE.david' = 'desktop'
+        'KATANA.david' = 'work-laptop'
+        'SRV1.david' = 'vm'
+        'SRV2.david' = 'vm'
+    }
+
+    Profiles = @{
+        desktop = @{
+            RightPrompt = $true
+        }
+        'work-laptop' = @{
+            GitStatusMode = 'async'
+        }
+        vm = @{
+            IconMode = 'ascii'
+            GitStatusMode = 'branch'
+        }
+    }
+}
+```
+
+CleanCli detects the current machine as `<COMPUTERNAME>.<username>`. If that identifier is not mapped during interactive profile load, CleanCli asks whether to set up the machine. The prompt is skipped for non-interactive shells, disabled hosts, and when `CLEANCLI_PROFILES_PROMPT=0` is set.
+
+Profile commands:
+
+```powershell
+Get-CleanCliProfile
+New-CleanCliMachineProfile -ProfileName desktop
+New-CleanCliMachineProfile -ProfileName vm -Force
+Set-CleanCliMachineProfile -ProfileName work-laptop
+```
+
+`Get-CleanCliProfile` shows the detected identifier, mapped profile, master settings, profile settings, active config path, and final merged settings. Set `CLEANCLI_PROFILES_PATH` to force a specific profiles file path.
+
 ## Prompt Display
 
 CleanCli renders Powerline-style segments with bridge separators. The separator foreground uses the previous segment background and the separator background uses the next segment background, so path and git blocks connect cleanly when the terminal font supports Powerline glyphs.
@@ -168,6 +226,7 @@ If git is slow, the prompt degrades to branch-only information and records the s
 Import-Module .\src\CleanCli\CleanCli.psd1 -Force
 Enable-CleanCli
 Get-CleanCliStatus
+Get-CleanCliProfile
 Get-CleanCliIconDiagnostics
 Measure-CleanCliStartup
 Measure-CleanCliStartup -Iterations 5
@@ -179,7 +238,7 @@ Measure-CleanCliStartup -Iterations 5
 
 `Measure-CleanCliStartup` reports separate timings for the no-profile baseline, CleanCli import, CleanCli enable, Terminal-Icons import, CleanCli plus Terminal-Icons, normal profile load, and forced profile load. Use `-Iterations` to add min/average/max statistics for each layer and reduce noise from one-off Windows process startup variance.
 
-`Get-CleanCliStatus` also reports `HostName`, `LoadStatus`, and `LoadReason` so profile diagnostics can explain whether CleanCli loaded or skipped initialization. Set `EnableInCodex`, `EnableInVSCode`, `EnableInWindowsTerminal`, or `EnableInPlainConsole` to `$false` to skip prompt initialization for that host.
+`Get-CleanCliStatus` also reports `HostName`, `LoadStatus`, `LoadReason`, `ProfileIdentifier`, `ProfileName`, `ProfileMapped`, and `ProfilesPath` so profile diagnostics can explain whether CleanCli loaded, skipped initialization, or matched a machine profile. Set `EnableInCodex`, `EnableInVSCode`, `EnableInWindowsTerminal`, or `EnableInPlainConsole` to `$false` to skip prompt initialization for that host.
 
 Install or update the module without network access:
 

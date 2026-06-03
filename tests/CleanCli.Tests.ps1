@@ -64,6 +64,9 @@ Describe 'CleanCli module behavior' {
         ($commands -contains 'Open-CleanCliExplorer') | Should Be $true
         ($commands -contains 'Show-CleanCliGitLog') | Should Be $true
         ($commands -contains 'Install-CleanCli') | Should Be $true
+        ($commands -contains 'Get-CleanCliProfile') | Should Be $true
+        ($commands -contains 'New-CleanCliMachineProfile') | Should Be $true
+        ($commands -contains 'Set-CleanCliMachineProfile') | Should Be $true
     }
 
     It 'returns default CleanCli options' {
@@ -187,10 +190,9 @@ Describe 'CleanCli module behavior' {
         Set-Content -LiteralPath (Join-Path $configRoot 'CleanCli.config.psd1') -Value "@{ IconMode = 'terminal-icons' }" -Encoding ASCII
 
         try {
-            $env:CLEANCLI_TEST_USER_CONFIG_PATH = Join-Path $configRoot 'CleanCli.config.psd1'
             $env:CLEANCLI_TEST_START_PATH = $startPath
             InModuleScope CleanCli {
-                $script:CleanCliUserConfigPathOverride = $env:CLEANCLI_TEST_USER_CONFIG_PATH
+                $script:CleanCliUserConfigPathOverride = Join-Path (Join-Path (Split-Path -Parent $env:CLEANCLI_TEST_START_PATH) 'Documents\PowerShell') 'CleanCli.config.psd1'
                 try {
                     $loaded = Initialize-CleanCliOptions -StartPath $env:CLEANCLI_TEST_START_PATH
 
@@ -202,8 +204,389 @@ Describe 'CleanCli module behavior' {
             }
         }
         finally {
-            Remove-Item Env:\CLEANCLI_TEST_USER_CONFIG_PATH -ErrorAction SilentlyContinue
             Remove-Item Env:\CLEANCLI_TEST_START_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'loads master and matched machine profile settings before project config' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $projectRoot = Join-Path $tempRoot 'project'
+        New-Item -ItemType Directory -Path $projectRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        $configPath = Join-Path $projectRoot 'CleanCli.config.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{
+        IconMode = 'native'
+        GitStatusMode = 'branch'
+    }
+    Identifiers = @{
+        'joyeuse.david' = 'desktop'
+    }
+    Profiles = @{
+        desktop = @{
+            GitStatusMode = 'async'
+            RightPrompt = `$true
+        }
+    }
+}
+"@ -Encoding ASCII
+        Set-Content -LiteralPath $configPath -Value "@{ RightPrompt = `$false }" -Encoding ASCII
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            $env:CLEANCLI_TEST_START_PATH = $projectRoot
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'JOYEUSE.david'
+                try {
+                    $loaded = Initialize-CleanCliOptions -StartPath $env:CLEANCLI_TEST_START_PATH
+
+                    $loaded.IconMode | Should Be 'native'
+                    $loaded.GitStatusMode | Should Be 'async'
+                    $loaded.RightPrompt | Should Be $false
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_START_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'maps multiple identifiers to one reusable profile' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{}
+    Identifiers = @{
+        'srv1.david' = 'vm'
+        'srv2.david' = 'vm'
+    }
+    Profiles = @{
+        vm = @{
+            IconMode = 'ascii'
+            GitStatusMode = 'branch'
+        }
+    }
+}
+"@ -Encoding ASCII
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            $env:CLEANCLI_TEST_START_PATH = $tempRoot
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'SRV2.david'
+                $script:CleanCliUserConfigPathOverride = Join-Path $env:CLEANCLI_TEST_START_PATH 'missing.user.config.psd1'
+                $tempRoot = $env:CLEANCLI_TEST_START_PATH
+                try {
+                    $loaded = Initialize-CleanCliOptions -StartPath $tempRoot
+
+                    $loaded.IconMode | Should Be 'ascii'
+                    $loaded.GitStatusMode | Should Be 'branch'
+                    $profile = Get-CleanCliProfile
+                    $profile.Identifier | Should Be 'SRV2.david'
+                    $profile.ProfileName | Should Be 'vm'
+                    $profile.Mapped | Should Be $true
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                    $script:CleanCliUserConfigPathOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_START_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'keeps environment overrides after profile and project settings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $projectRoot = Join-Path $tempRoot 'project'
+        New-Item -ItemType Directory -Path $projectRoot -Force | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        $configPath = Join-Path $projectRoot 'CleanCli.config.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{
+        AsciiMode = `$false
+    }
+    Identifiers = @{
+        'joyeuse.david' = 'desktop'
+    }
+    Profiles = @{
+        desktop = @{
+            AsciiMode = `$false
+        }
+    }
+}
+"@ -Encoding ASCII
+        Set-Content -LiteralPath $configPath -Value "@{ AsciiMode = `$false }" -Encoding ASCII
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+        $hadCleanCliAscii = Test-Path Env:\CLEANCLI_ASCII
+        $originalCleanCliAscii = $env:CLEANCLI_ASCII
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            $env:CLEANCLI_TEST_START_PATH = $projectRoot
+            $env:CLEANCLI_ASCII = '1'
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'JOYEUSE.david'
+                try {
+                    $loaded = Initialize-CleanCliOptions -StartPath $env:CLEANCLI_TEST_START_PATH
+
+                    $loaded.AsciiMode | Should Be $true
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_START_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliAscii) {
+                $env:CLEANCLI_ASCII = $originalCleanCliAscii
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_ASCII -ErrorAction SilentlyContinue
+            }
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'creates a machine profile mapping' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'WORKSTATION.david'
+                try {
+                    { New-CleanCliMachineProfile -ProfileName '   ' } | Should Throw 'ProfileName cannot be blank.'
+
+                    $profile = New-CleanCliMachineProfile -ProfileName 'desktop'
+
+                    $profile.Identifier | Should Be 'WORKSTATION.david'
+                    $profile.ProfileName | Should Be 'desktop'
+                    $profile.Mapped | Should Be $true
+                    Test-Path -LiteralPath $env:CLEANCLI_PROFILES_PATH | Should Be $true
+
+                    $data = Import-PowerShellDataFile -LiteralPath $env:CLEANCLI_PROFILES_PATH
+                    $data.Identifiers['WORKSTATION.david'] | Should Be 'desktop'
+                    $data.Profiles.Contains('desktop') | Should Be $true
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'refuses to overwrite a machine mapping without Force' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{}
+    Identifiers = @{
+        'WORKSTATION.david' = 'desktop'
+    }
+    Profiles = @{
+        desktop = @{}
+        laptop = @{}
+    }
+}
+"@ -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'workstation.DAVID'
+                try {
+                    { New-CleanCliMachineProfile -ProfileName 'laptop' } | Should Throw 'already maps to profile'
+
+                    $data = Import-PowerShellDataFile -LiteralPath $env:CLEANCLI_PROFILES_PATH
+                    $data.Identifiers['WORKSTATION.david'] | Should Be 'desktop'
+
+                    $profile = New-CleanCliMachineProfile -ProfileName 'laptop' -Force
+                    $profile.ProfileName | Should Be 'laptop'
+
+                    $data = Import-PowerShellDataFile -LiteralPath $env:CLEANCLI_PROFILES_PATH
+                    $data.Identifiers['WORKSTATION.david'] | Should Be 'laptop'
+                    @($data.Identifiers.Keys | Where-Object { $_ -ceq 'workstation.DAVID' }).Count | Should Be 0
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'remaps only to an existing profile' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{}
+    Identifiers = @{
+        'WORKSTATION.david' = 'desktop'
+    }
+    Profiles = @{
+        desktop = @{}
+        laptop = @{
+            GitStatusMode = 'branch'
+        }
+    }
+}
+"@ -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'workstation.DAVID'
+                try {
+                    { Set-CleanCliMachineProfile -ProfileName '   ' } | Should Throw 'ProfileName cannot be blank.'
+                    { Set-CleanCliMachineProfile -ProfileName 'missing' } | Should Throw "profile 'missing' does not exist"
+
+                    $profile = Set-CleanCliMachineProfile -ProfileName 'laptop'
+                    $profile.ProfileName | Should Be 'laptop'
+                    $profile.Mapped | Should Be $true
+                    $profile.ProfileSettings.GitStatusMode | Should Be 'branch'
+
+                    $data = Import-PowerShellDataFile -LiteralPath $env:CLEANCLI_PROFILES_PATH
+                    $data.Identifiers['WORKSTATION.david'] | Should Be 'laptop'
+                    $data.Profiles.Contains('missing') | Should Be $false
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'throws instead of dropping unknown machine profile settings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{
+        NotARealOption = 'kept'
+    }
+    Identifiers = @{}
+    Profiles = @{}
+}
+"@ -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'WORKSTATION.david'
+                try {
+                    { New-CleanCliMachineProfile -ProfileName 'desktop' } | Should Throw "Unknown CleanCli option 'NotARealOption'"
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'rejects invalid values in machine profile settings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{}
+    Identifiers = @{
+        'WORKSTATION.david' = 'desktop'
+    }
+    Profiles = @{
+        desktop = @{
+            GitStatusMode = 'broken'
+        }
+    }
+}
+"@ -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'WORKSTATION.david'
+                try {
+                    { Initialize-CleanCliOptions -StartPath $env:TEMP } | Should Throw 'GitStatusMode must be one of: full, branch, async.'
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }
@@ -1280,6 +1663,272 @@ Describe 'CleanCli module behavior' {
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
             Remove-Item Env:\CODEX_THREAD_ID -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'reports compact profile diagnostics in CleanCli status' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        Set-Content -LiteralPath $profilesPath -Value @"
+@{
+    Master = @{}
+    Identifiers = @{
+        'WORKSTATION.david' = 'desktop'
+    }
+    Profiles = @{
+        desktop = @{}
+    }
+}
+"@ -Encoding ASCII
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'WORKSTATION.david'
+                $script:CleanCliProfileState.Identifier = $null
+                $script:CleanCliProfileState.ProfileName = $null
+                $script:CleanCliProfileState.Mapped = $false
+                $script:CleanCliProfileState.ProfilesPath = $null
+                $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                try {
+                    Initialize-CleanCliOptions | Out-Null
+                    $status = Get-CleanCliStatus
+
+                    $status.ProfileIdentifier | Should Be 'WORKSTATION.david'
+                    $status.ProfileName | Should Be 'desktop'
+                    $status.ProfileMapped | Should Be $true
+                    $status.ProfilesPath | Should Be $env:CLEANCLI_PROFILES_PATH
+                }
+                finally {
+                    $script:CleanCliMachineIdentifierOverride = $null
+                    $script:CleanCliProfilePromptReader = $null
+                    $script:CleanCliProfileState.Identifier = $null
+                    $script:CleanCliProfileState.ProfileName = $null
+                    $script:CleanCliProfileState.Mapped = $false
+                    $script:CleanCliProfileState.ProfilesPath = $null
+                    $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                    $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'runs setup prompt for an unmapped interactive machine' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'NEWMACHINE.david'
+                $script:CleanCliProfileState.Identifier = $null
+                $script:CleanCliProfileState.ProfileName = $null
+                $script:CleanCliProfileState.Mapped = $false
+                $script:CleanCliProfileState.ProfilesPath = $null
+                $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                $answers = [System.Collections.Queue]::new()
+                $answers.Enqueue('yes')
+                $answers.Enqueue('laptop')
+                $script:CleanCliProfilePromptReader = {
+                    param([string]$Prompt)
+                    $script:CleanCliPromptCalls++
+                    $answers.Dequeue()
+                }
+                $script:CleanCliPromptCalls = 0
+                try {
+                    Invoke-CleanCliProfileSetupPrompt -InteractiveOverride:$true
+
+                    $script:CleanCliPromptCalls | Should Be 2
+                    $profile = Get-CleanCliProfile
+                    $profile.Identifier | Should Be 'NEWMACHINE.david'
+                    $profile.ProfileName | Should Be 'laptop'
+                    $profile.Mapped | Should Be $true
+                    Test-Path -LiteralPath $env:CLEANCLI_PROFILES_PATH | Should Be $true
+                }
+                finally {
+                    Disable-CleanCli
+                    $script:CleanCliMachineIdentifierOverride = $null
+                    $script:CleanCliProfilePromptReader = $null
+                    $script:CleanCliPromptCalls = $null
+                    $script:CleanCliProfileState.Identifier = $null
+                    $script:CleanCliProfileState.ProfileName = $null
+                    $script:CleanCliProfileState.Mapped = $false
+                    $script:CleanCliProfileState.ProfilesPath = $null
+                    $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                    $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does not create a profile from a blank setup prompt name' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'BLANKNAME.david'
+                $script:CleanCliProfileState.Identifier = $null
+                $script:CleanCliProfileState.ProfileName = $null
+                $script:CleanCliProfileState.Mapped = $false
+                $script:CleanCliProfileState.ProfilesPath = $null
+                $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                $answers = [System.Collections.Queue]::new()
+                $answers.Enqueue('y')
+                $answers.Enqueue('   ')
+                $script:CleanCliProfilePromptReader = {
+                    param([string]$Prompt)
+                    $answers.Dequeue()
+                }
+                try {
+                    Invoke-CleanCliProfileSetupPrompt -InteractiveOverride:$true
+
+                    Test-Path -LiteralPath $env:CLEANCLI_PROFILES_PATH | Should Be $false
+                    $profile = Get-CleanCliProfile
+                    $profile.Mapped | Should Be $false
+                    $profile.ProfileName | Should Be $null
+                }
+                finally {
+                    Disable-CleanCli
+                    $script:CleanCliMachineIdentifierOverride = $null
+                    $script:CleanCliProfilePromptReader = $null
+                    $script:CleanCliProfileState.Identifier = $null
+                    $script:CleanCliProfileState.ProfileName = $null
+                    $script:CleanCliProfileState.Mapped = $false
+                    $script:CleanCliProfileState.ProfilesPath = $null
+                    $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                    $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does not prompt for an unmapped non-interactive machine or when prompt is disabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        $profilesPath = Join-Path $tempRoot 'CleanCli.profiles.psd1'
+        $hadCleanCliConfigPath = Test-Path Env:\CLEANCLI_CONFIG_PATH
+        $originalCleanCliConfigPath = $env:CLEANCLI_CONFIG_PATH
+        $hadProfilesPrompt = Test-Path Env:\CLEANCLI_PROFILES_PROMPT
+        $originalProfilesPrompt = $env:CLEANCLI_PROFILES_PROMPT
+        $hadCodexThreadId = Test-Path Env:\CODEX_THREAD_ID
+        $originalCodexThreadId = $env:CODEX_THREAD_ID
+
+        try {
+            $env:CLEANCLI_PROFILES_PATH = $profilesPath
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            InModuleScope CleanCli {
+                $script:CleanCliOptions = [ordered]@{}
+                $script:CleanCliMachineIdentifierOverride = 'UNMAPPED.david'
+                $script:CleanCliProfileState.Identifier = $null
+                $script:CleanCliProfileState.ProfileName = $null
+                $script:CleanCliProfileState.Mapped = $false
+                $script:CleanCliProfileState.ProfilesPath = $null
+                $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                $script:CleanCliProfilePromptReader = {
+                    throw 'profile setup prompt should not run'
+                }
+                try {
+                    Invoke-CleanCliProfileSetupPrompt -InteractiveOverride:$false
+                    $env:CLEANCLI_PROFILES_PROMPT = '0'
+                    Invoke-CleanCliProfileSetupPrompt -InteractiveOverride:$true
+                    Remove-Item Env:\CLEANCLI_PROFILES_PROMPT -ErrorAction SilentlyContinue
+
+                    Test-Path -LiteralPath $env:CLEANCLI_PROFILES_PATH | Should Be $false
+
+                    Initialize-CleanCliOptions | Out-Null
+                    Set-CleanCliOption -Name EnableInCodex -Value $false | Out-Null
+                    $env:CODEX_THREAD_ID = 'test'
+                    Enable-CleanCli
+                    $status = Get-CleanCliStatus
+                    $status.Enabled | Should Be $false
+                    $status.LoadStatus | Should Be 'skipped'
+                }
+                finally {
+                    Disable-CleanCli
+                    Remove-Item Env:\CODEX_THREAD_ID -ErrorAction SilentlyContinue
+                    $script:CleanCliMachineIdentifierOverride = $null
+                    $script:CleanCliProfilePromptReader = $null
+                    $script:CleanCliProfileState.Identifier = $null
+                    $script:CleanCliProfileState.ProfileName = $null
+                    $script:CleanCliProfileState.Mapped = $false
+                    $script:CleanCliProfileState.ProfilesPath = $null
+                    $script:CleanCliProfileState.MasterSettings = [ordered]@{}
+                    $script:CleanCliProfileState.ProfileSettings = [ordered]@{}
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_PROFILES_PATH -ErrorAction SilentlyContinue
+            if ($hadCleanCliConfigPath) {
+                $env:CLEANCLI_CONFIG_PATH = $originalCleanCliConfigPath
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            }
+            if ($hadProfilesPrompt) {
+                $env:CLEANCLI_PROFILES_PROMPT = $originalProfilesPrompt
+            }
+            else {
+                Remove-Item Env:\CLEANCLI_PROFILES_PROMPT -ErrorAction SilentlyContinue
+            }
+            if ($hadCodexThreadId) {
+                $env:CODEX_THREAD_ID = $originalCodexThreadId
+            }
+            else {
+                Remove-Item Env:\CODEX_THREAD_ID -ErrorAction SilentlyContinue
+            }
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
         }
     }

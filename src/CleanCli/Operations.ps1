@@ -14,6 +14,35 @@ function Get-CleanCliHostName {
     'PlainConsole'
 }
 
+function Test-CleanCliInteractiveConsole {
+    try {
+        if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) { return $false }
+    }
+    catch { return $false }
+    $true
+}
+
+function Get-CleanCliMachineIdentifier {
+    if ($script:CleanCliMachineIdentifierOverride) {
+        return $script:CleanCliMachineIdentifierOverride
+    }
+
+    $computerName = $env:COMPUTERNAME
+    $userName = $env:USERNAME
+
+    if (-not $computerName) { $computerName = [Environment]::MachineName }
+    if (-not $userName) { $userName = [Environment]::UserName }
+
+    "$computerName.$userName"
+}
+
+function ConvertTo-CleanCliProfileKey {
+    param([string]$Value)
+
+    if (-not $Value) { return '' }
+    $Value.Trim().ToLowerInvariant()
+}
+
 function Test-CleanCliHostEnabled {
     param([string]$HostName = (Get-CleanCliHostName))
 
