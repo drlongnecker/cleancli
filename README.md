@@ -18,7 +18,15 @@ So the goal is to create a clean CLI that feels native with enough tuning and cu
 
 ## Install
 
-Use `settings\Microsoft.PowerShell_profile.ps1` as the PowerShell profile content, or dot-source it from your existing profile.
+Install or update CleanCli from GitHub:
+
+```powershell
+Invoke-WebRequest https://raw.githubusercontent.com/drlongnecker/cleancli/main/installer.ps1 | Invoke-Expression
+```
+
+The installer downloads the module to the current user's PowerShell modules directory, using the directory beside `$PROFILE`. Existing installs are updated in place and do not change the PowerShell profile. On a first install, the installer asks whether CleanCli should auto-load in new PowerShell sessions. If you choose yes, it backs up the current profile before appending the CleanCli import block at the bottom.
+
+For local development, use `src\Microsoft.PowerShell_profile.ps1` as the PowerShell profile content, or dot-source it from your existing profile.
 
 The profile imports `src\CleanCli\CleanCli.psd1` and runs `Enable-CleanCli` only when profile loading is enabled. Commands launched with `pwsh -NoProfile` do not load CleanCli.
 

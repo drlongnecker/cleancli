@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 $ModulePath = Join-Path $ProjectRoot 'src\CleanCli\CleanCli.psd1'
 $ProfilePath = Join-Path $ProjectRoot 'src\Microsoft.PowerShell_profile.ps1'
+$InstallerPath = Join-Path $ProjectRoot 'installer.ps1'
 
 Describe 'CleanCli profile bootstrap' {
     It 'does not load online or slow prompt dependencies' {
@@ -31,6 +32,56 @@ Describe 'CleanCli profile bootstrap' {
 
         $profileText | Should Not Match 'function\s+log\b'
         $profileText | Should Not Match 'function\s+e\b'
+    }
+}
+
+Describe 'CleanCli installer script' {
+    It 'parses as valid PowerShell' {
+        $tokens = $null
+        $errors = $null
+
+        [System.Management.Automation.Language.Parser]::ParseFile($InstallerPath, [ref]$tokens, [ref]$errors) | Out-Null
+
+        $errors.Count | Should Be 0
+    }
+
+    It 'downloads the complete module file set from GitHub raw content' {
+        $installerText = Get-Content -LiteralPath $InstallerPath -Raw
+
+        $installerText | Should Match 'https://raw\.githubusercontent\.com/drlongnecker/cleancli/main/src/CleanCli'
+        foreach ($fileName in @(
+            'CleanCli.format.ps1xml',
+            'CleanCli.psd1',
+            'CleanCli.psm1',
+            'Config.ps1',
+            'DirectoryCache.ps1',
+            'Git.ps1',
+            'Icons.ps1',
+            'Navigation.ps1',
+            'Operations.ps1',
+            'Profile.ps1',
+            'Prompt.ps1',
+            'PSReadLine.ps1'
+        )) {
+            $installerText | Should Match ([regex]::Escape("'$fileName'"))
+        }
+    }
+
+    It 'updates existing installs without adding profile autoload' {
+        $installerText = Get-Content -LiteralPath $InstallerPath -Raw
+
+        $installerText | Should Match '\$alreadyInstalled = Test-Path'
+        $installerText | Should Match 'if \(\$alreadyInstalled\)'
+        $installerText | Should Match 'Profile autoload prompt was skipped'
+    }
+
+    It 'backs up the current profile before appending CleanCli autoload' {
+        $installerText = Get-Content -LiteralPath $InstallerPath -Raw
+
+        $installerText | Should Match 'cleancli-backup'
+        $installerText | Should Match 'Add-Content -LiteralPath \$Path'
+        $installerText | Should Match "Import-Module '\`$escapedModuleManifestPath' -Force"
+        $installerText | Should Match 'Enable-CleanCli'
     }
 }
 
