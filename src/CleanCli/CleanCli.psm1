@@ -14,6 +14,12 @@ $script:CleanCliState = [ordered]@{
     LastGit = $null
     LastSlowGit = $null
     LastGitProcessCount = 0
+    LastDirectoryReadAheadPath = ''
+    LastDirectoryReadAheadDurationMilliseconds = 0
+    LastDirectoryReadAheadSkippedReason = ''
+    LastDirectoryGitStatusCount = 0
+    LastDirectoryGitStatusDurationMilliseconds = 0
+    LastDirectoryGitStatusTimedOutCount = 0
     HostName = $null
     LoadStatus = 'not-started'
     LoadReason = ''
@@ -32,8 +38,14 @@ $script:CleanCliMachineIdentifierOverride = $null
 $script:CleanCliGitCache = @{}
 $script:CleanCliGitLastSuccessful = @{}
 $script:CleanCliGitAsyncRefreshes = @{}
+$script:CleanCliDirectoryMetadataCache = @{}
+$script:CleanCliDirectoryReadAheadJobs = @{}
+$script:CleanCliDirectoryReadAheadPending = @{}
+$script:CleanCliDirectoryReadAheadLastRequest = @{}
+$script:CleanCliDirectoryReadAheadMaxActive = 1
 $script:CleanCliGitCommand = $null
 $script:CleanCliGitAsyncCommand = $null
+$script:CleanCliDirectoryReadAheadCommand = $null
 $script:CleanCliCommandDurationProvider = $null
 $script:CleanCliGitTimeoutMilliseconds = 1000
 $script:CleanCliGitCacheMilliseconds = 750
@@ -45,6 +57,12 @@ $script:CleanCliDefaultOptions = [ordered]@{
     GitIgnoreSubmodules = 'none'
     GitStatusMode = 'full'
     GitDivergenceMode = 'none'
+    DirectoryReadAheadMode = 'metadata'
+    DirectoryReadAheadDepth = 1
+    DirectoryMetadataCacheMilliseconds = 5000
+    DirectoryReadAheadMaxDirectories = 64
+    DirectoryReadAheadDebounceMilliseconds = 250
+    DirectoryGitStatusMode = 'disabled'
     PathDisplayMode = 'auto'
     PromptLayout = 'single'
     IconMode = 'disabled'
@@ -78,6 +96,7 @@ $script:CleanCliSlowGitRepositories = @{}
 
 . (Join-Path $script:CleanCliRoot 'Config.ps1')
 . (Join-Path $script:CleanCliRoot 'Git.ps1')
+. (Join-Path $script:CleanCliRoot 'DirectoryCache.ps1')
 . (Join-Path $script:CleanCliRoot 'Prompt.ps1')
 . (Join-Path $script:CleanCliRoot 'PSReadLine.ps1')
 . (Join-Path $script:CleanCliRoot 'Icons.ps1')
@@ -148,6 +167,15 @@ function Get-CleanCliStatus {
         GitCacheEntries = $script:CleanCliGitCache.Count
         GitTimeoutMilliseconds = $script:CleanCliGitTimeoutMilliseconds
         GitProcessCount = $script:CleanCliState.LastGitProcessCount
+        DirectoryMetadataCacheEntries = $script:CleanCliDirectoryMetadataCache.Count
+        DirectoryReadAheadPendingCount = $script:CleanCliDirectoryReadAheadPending.Count
+        DirectoryReadAheadActiveCount = $script:CleanCliDirectoryReadAheadJobs.Count
+        LastDirectoryReadAheadPath = $script:CleanCliState.LastDirectoryReadAheadPath
+        LastDirectoryReadAheadDurationMilliseconds = [math]::Round([double]$script:CleanCliState.LastDirectoryReadAheadDurationMilliseconds, 2)
+        LastDirectoryReadAheadSkippedReason = $script:CleanCliState.LastDirectoryReadAheadSkippedReason
+        LastDirectoryGitStatusCount = $script:CleanCliState.LastDirectoryGitStatusCount
+        LastDirectoryGitStatusDurationMilliseconds = [math]::Round([double]$script:CleanCliState.LastDirectoryGitStatusDurationMilliseconds, 2)
+        LastDirectoryGitStatusTimedOutCount = $script:CleanCliState.LastDirectoryGitStatusTimedOutCount
         AsciiMode = $env:CLEANCLI_ASCII -eq '1'
         ProfileIdentifier = $script:CleanCliProfileState.Identifier
         ProfileName = $script:CleanCliProfileState.ProfileName

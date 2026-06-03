@@ -80,6 +80,7 @@ function Set-CleanCliLocation {
 
     Set-Location -LiteralPath $target
     Add-CleanCliLocationHistory -Path $target
+    Start-CleanCliDirectoryReadAhead -Path $target
 }
 
 function Open-CleanCliExplorer {

@@ -85,6 +85,23 @@ function ConvertTo-CleanCliOptionValue {
             }
             return $mode
         }
+        'DirectoryReadAheadMode' {
+            $mode = [string]$Value
+            if ($mode -notin @('disabled', 'metadata')) {
+                throw "DirectoryReadAheadMode must be one of: disabled, metadata."
+            }
+            return $mode
+        }
+        'DirectoryGitStatusMode' {
+            $mode = [string]$Value
+            if ($mode -notin @('disabled', 'async')) {
+                throw "DirectoryGitStatusMode must be one of: disabled, async."
+            }
+            return $mode
+        }
+        { $_ -in @('DirectoryReadAheadDepth', 'DirectoryMetadataCacheMilliseconds', 'DirectoryReadAheadMaxDirectories', 'DirectoryReadAheadDebounceMilliseconds') } {
+            return [int]$Value
+        }
         'PathDisplayMode' {
             $mode = [string]$Value
             if ($mode -notin @('full', 'compact', 'auto')) {

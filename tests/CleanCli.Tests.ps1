@@ -86,6 +86,12 @@ Describe 'CleanCli module behavior' {
             $options.GitIgnoreSubmodules | Should Be 'none'
             $options.GitStatusMode | Should Be 'full'
             $options.GitDivergenceMode | Should Be 'none'
+            $options.DirectoryReadAheadMode | Should Be 'metadata'
+            $options.DirectoryReadAheadDepth | Should Be 1
+            $options.DirectoryMetadataCacheMilliseconds | Should Be 5000
+            $options.DirectoryReadAheadMaxDirectories | Should Be 64
+            $options.DirectoryReadAheadDebounceMilliseconds | Should Be 250
+            $options.DirectoryGitStatusMode | Should Be 'disabled'
             $options.PathDisplayMode | Should Be 'auto'
             $options.PromptLayout | Should Be 'single'
             $options.IconMode | Should Be 'disabled'
@@ -2277,6 +2283,549 @@ Describe 'CleanCli module behavior' {
 
                 ($items | Where-Object Name -eq 'src').Icon | Should Be '[D]'
                 ($items | Where-Object Name -eq 'README.md').Icon | Should Be '[F]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders fresh git repository branch metadata for native directory listings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'plain') | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+                $script:CleanCliGitCommand = {
+                    throw 'directory metadata should not invoke git.exe'
+                }
+
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH
+
+                $repoItem = $items | Where-Object Name -eq 'repo'
+                $plainItem = $items | Where-Object Name -eq 'plain'
+
+                $repoItem.IsGitRepository | Should Be $true
+                $repoItem.GitBranch | Should Be 'main'
+                $repoItem.DisplayName | Should Match 'repo \[main\]'
+                $plainItem.IsGitRepository | Should Be $false
+                $plainItem.DisplayName | Should Not Match '\[main\]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders ASCII-safe git repository markers for directory listings' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/ascii-branch' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value ascii | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+
+                $repoItem = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $repoItem.Icon | Should Be '[G]'
+                $repoItem.GitBranch | Should Be 'ascii-branch'
+                $repoItem.DisplayName | Should Match '\[G\]\s+repo \[ascii-branch\]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'resolves worktree git files for directory metadata without invoking git status' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $worktree = Join-Path $tempRoot 'worktree'
+        $gitDir = Join-Path $tempRoot '.git\worktrees\worktree'
+        New-Item -ItemType Directory -Path $worktree | Out-Null
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $worktree '.git') -Value 'gitdir: ..\.git\worktrees\worktree' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/worktree-branch' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+                $script:CleanCliGitCommand = {
+                    throw 'directory metadata should not invoke git.exe'
+                }
+
+                $item = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'worktree'
+
+                $item.IsGitRepository | Should Be $true
+                $item.GitBranch | Should Be 'worktree-branch'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders detached HEAD metadata using the short hash' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value '1234567890abcdef' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+
+                $item = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $item.GitBranch | Should Be '1234567'
+                $item.DisplayName | Should Match 'repo \[1234567\]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'drops stale repository metadata when .git is removed' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+                $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+                Remove-Item -LiteralPath (Join-Path $env:CLEANCLI_TEST_PATH 'repo\.git') -Recurse -Force
+
+                $second = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $first.GitBranch | Should Be 'main'
+                $second.IsGitRepository | Should Be $false
+                $second.DisplayName | Should Not Match '\[main\]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does not render expired branch metadata before refresh' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+                Set-CleanCliOption -Name DirectoryMetadataCacheMilliseconds -Value 1 | Out-Null
+                $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+                Start-Sleep -Milliseconds 20
+
+                $second = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $first.GitBranch | Should Be 'main'
+                $second.GitBranch | Should Be ''
+                $second.DisplayName | Should Not Match '\[main\]'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'invalidates changed HEAD metadata and refreshes through read-ahead' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryGitStatusMode -Value async | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadDebounceMilliseconds -Value 0 | Out-Null
+                $script:CleanCliDirectoryMetadataCache = @{}
+                $script:CleanCliDirectoryReadAheadJobs = @{}
+                $script:CleanCliDirectoryReadAheadPending = @{}
+                $script:CleanCliDirectoryReadAheadLastRequest = @{}
+                $script:CleanCliDirectoryReadAheadCommand = {
+                    param($Path, $Depth)
+                    Get-CleanCliDirectoryMetadataInline -Path (Join-Path $Path 'repo') -DataSource 'read-ahead'
+                }
+                $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+                Start-Sleep -Milliseconds 20
+                Set-Content -LiteralPath (Join-Path $env:CLEANCLI_TEST_PATH 'repo\.git\HEAD') -Value 'ref: refs/heads/feature' -Encoding ASCII
+
+                $second = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+                $third = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $first.GitBranch | Should Be 'main'
+                $second.GitBranch | Should Be ''
+                $third.GitBranch | Should Be 'feature'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'renders async git status colors and counts for repository directories' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        foreach ($name in @('clean', 'pending', 'dirty')) {
+            $gitDir = Join-Path (Join-Path $tempRoot $name) '.git'
+            New-Item -ItemType Directory -Path $gitDir | Out-Null
+            Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+        }
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadDebounceMilliseconds -Value 0 | Out-Null
+                $script:CleanCliDirectoryMetadataCache = @{}
+                $script:CleanCliDirectoryReadAheadJobs = @{}
+                $script:CleanCliDirectoryReadAheadPending = @{}
+                $script:CleanCliDirectoryReadAheadLastRequest = @{}
+                $script:CleanCliDirectoryReadAheadCommand = {
+                    param($Path, $Depth)
+                    foreach ($name in @('clean', 'pending', 'dirty')) {
+                        $repoPath = Join-Path $Path $name
+                        $gitDir = Join-Path $repoPath '.git'
+                        $statusText = switch ($name) {
+                            'clean' { "## main...origin/main" }
+                            'pending' { "## main...origin/main [ahead 2]" }
+                            'dirty' { "## main...origin/main`n M changed.txt`nA  added.txt`n D deleted.txt`n?? new.txt" }
+                        }
+                        New-CleanCliDirectoryMetadata `
+                            -Path $repoPath `
+                            -IsGitRepository $true `
+                            -GitRoot $repoPath `
+                            -GitDir $gitDir `
+                            -HeadPath (Join-Path $gitDir 'HEAD') `
+                            -IndexPath (Join-Path $gitDir 'index') `
+                            -Branch 'main' `
+                            -DataSource 'read-ahead' `
+                            -GitStatus (New-CleanCliDirectoryGitStatus -StatusText $statusText -DurationMilliseconds 12 -DataSource 'status')
+                    }
+                }
+
+                Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Out-Null
+                $items = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH
+
+                $clean = $items | Where-Object Name -eq 'clean'
+                $pending = $items | Where-Object Name -eq 'pending'
+                $dirty = $items | Where-Object Name -eq 'dirty'
+                $escape = [char]27
+
+                $clean.GitStatusState | Should Be 'clean'
+                $clean.DisplayName | Should Match "$escape\[38;2;124;255;155m"
+                $clean.DisplayName | Should Match 'clean \[main\]'
+                $pending.GitStatusState | Should Be 'pending'
+                $pending.GitAhead | Should Be 2
+                $pending.DisplayName | Should Match "$escape\[38;2;255;209;102m"
+                $pending.DisplayName | Should Match 'pending \[main ahead 2\]'
+                $dirty.GitStatusState | Should Be 'dirty'
+                $dirty.GitStatusSummary | Should Be '?1 +1 ~1 -1'
+                $dirty.DisplayName | Should Match "$escape\[38;2;255;107;107m"
+                $dirty.DisplayName | Should Match 'dirty \[main \?1 \+1 ~1 -1\]'
+                $script:CleanCliState.LastDirectoryGitStatusCount | Should Be 3
+                $script:CleanCliState.LastDirectoryGitStatusDurationMilliseconds | Should Be 36
+                $script:CleanCliState.LastDirectoryGitStatusTimedOutCount | Should Be 0
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'keeps repository listing status unknown when directory git status mode is disabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $repo = Join-Path $tempRoot 'repo'
+        $gitDir = Join-Path $repo '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryGitStatusMode -Value disabled | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadDebounceMilliseconds -Value 0 | Out-Null
+
+                $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+                Start-Sleep -Milliseconds 250
+                Receive-CleanCliDirectoryReadAhead
+                $second = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'repo'
+
+                $first.GitStatusState | Should Be 'unknown'
+                $second.GitStatusState | Should Be 'unknown'
+                $second.DisplayName | Should Match 'repo \[main\]'
+                $second.DisplayName | Should Match "$([char]27)\[38;2;125;211;252m"
+                $second.DisplayName | Should Not Match 'ahead|\?1|\+1|~1|-1'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'debounces repeated directory read-ahead from ls' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'repo') | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadDebounceMilliseconds -Value 10000 | Out-Null
+                $script:CleanCliDirectoryMetadataCache = @{}
+                $script:CleanCliDirectoryReadAheadJobs = @{}
+                $script:CleanCliDirectoryReadAheadPending = @{}
+                $script:CleanCliDirectoryReadAheadLastRequest = @{}
+                $script:CleanCliDirectoryReadAheadCalls = 0
+                $script:CleanCliDirectoryReadAheadCommand = {
+                    param($Path, $Depth)
+                    $script:CleanCliDirectoryReadAheadCalls++
+                    @()
+                }
+
+                Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Out-Null
+                Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Out-Null
+
+                $script:CleanCliDirectoryReadAheadCalls | Should Be 1
+                $script:CleanCliState.LastDirectoryReadAheadSkippedReason | Should Be 'debounced'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'debounces repeated directory read-ahead from cd' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $target = Join-Path $tempRoot 'target'
+        New-Item -ItemType Directory -Path $target | Out-Null
+        $historyPath = Join-Path $tempRoot 'history.json'
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_LOCATION_HISTORY_PATH = $historyPath
+            $env:CLEANCLI_TEST_PATH = $target
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadDebounceMilliseconds -Value 10000 | Out-Null
+                $script:CleanCliDirectoryMetadataCache = @{}
+                $script:CleanCliDirectoryReadAheadJobs = @{}
+                $script:CleanCliDirectoryReadAheadPending = @{}
+                $script:CleanCliDirectoryReadAheadLastRequest = @{}
+                $script:CleanCliDirectoryReadAheadCalls = 0
+                $script:CleanCliDirectoryReadAheadCommand = {
+                    param($Path, $Depth)
+                    $script:CleanCliDirectoryReadAheadCalls++
+                    @()
+                }
+
+                Push-Location $env:TEMP
+                try {
+                    Set-CleanCliLocation -Path $env:CLEANCLI_TEST_PATH
+                    Set-CleanCliLocation -Path $env:CLEANCLI_TEST_PATH
+                }
+                finally {
+                    Pop-Location
+                }
+
+                $script:CleanCliDirectoryReadAheadCalls | Should Be 1
+                $script:CleanCliState.LastDirectoryReadAheadSkippedReason | Should Be 'debounced'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_LOCATION_HISTORY_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'queues unique read-ahead paths when concurrency is full' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $first = Join-Path $tempRoot 'first'
+        $second = Join-Path $tempRoot 'second'
+        New-Item -ItemType Directory -Path $first | Out-Null
+        New-Item -ItemType Directory -Path $second | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_FIRST_PATH = $first
+            $env:CLEANCLI_SECOND_PATH = $second
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadDebounceMilliseconds -Value 0 | Out-Null
+                $script:CleanCliDirectoryReadAheadJobs = @{
+                    ([System.IO.Path]::GetFullPath($env:CLEANCLI_FIRST_PATH)) = @{
+                        Path = [System.IO.Path]::GetFullPath($env:CLEANCLI_FIRST_PATH)
+                        Job = $null
+                    }
+                }
+                $script:CleanCliDirectoryReadAheadPending = @{}
+                $script:CleanCliDirectoryReadAheadLastRequest = @{}
+
+                Start-CleanCliDirectoryReadAhead -Path $env:CLEANCLI_SECOND_PATH
+
+                $script:CleanCliDirectoryReadAheadJobs.Count | Should Be 1
+                $script:CleanCliDirectoryReadAheadPending.Count | Should Be 1
+                $script:CleanCliState.LastDirectoryReadAheadSkippedReason | Should Be 'queued'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_FIRST_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_SECOND_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'skips read-ahead for oversized directories' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'one') | Out-Null
+        New-Item -ItemType Directory -Path (Join-Path $tempRoot 'two') | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMaxDirectories -Value 1 | Out-Null
+                $script:CleanCliDirectoryReadAheadCommand = {
+                    throw 'oversized directories should not start read-ahead'
+                }
+
+                Start-CleanCliDirectoryReadAhead -Path $env:CLEANCLI_TEST_PATH
+
+                $script:CleanCliState.LastDirectoryReadAheadSkippedReason | Should Be 'too many directories'
+                $script:CleanCliDirectoryReadAheadCommand = $null
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'keeps directory listing contents fresh while using metadata cache' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value native | Out-Null
+                Set-CleanCliOption -Name DirectoryReadAheadMode -Value disabled | Out-Null
+
+                $first = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH
+                Set-Content -LiteralPath (Join-Path $env:CLEANCLI_TEST_PATH 'created.txt') -Value 'new' -Encoding ASCII
+                $second = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH
+                Remove-Item -LiteralPath (Join-Path $env:CLEANCLI_TEST_PATH 'created.txt') -Force
+                $third = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH
+
+                ($first | Where-Object Name -eq 'created.txt') | Should Be $null
+                ($second | Where-Object Name -eq 'created.txt').Name | Should Be 'created.txt'
+                ($third | Where-Object Name -eq 'created.txt') | Should Be $null
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'preserves normal Get-ChildItem output when icon mode is disabled' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $tempRoot | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'file.txt') -Value 'test' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                $item = Get-CleanCliChildItem -Path $env:CLEANCLI_TEST_PATH | Where-Object Name -eq 'file.txt'
+
+                $item.PSObject.TypeNames[0] | Should Not Be 'CleanCli.IconItem'
+                ($item.PSObject.Properties.Name -contains 'DisplayName') | Should Be $false
             }
         }
         finally {

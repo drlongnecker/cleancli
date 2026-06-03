@@ -201,9 +201,16 @@ function Get-CleanCliIconDiagnostics {
 }
 
 function Get-CleanCliNativeIcon {
-    param([System.IO.FileSystemInfo]$Item)
+    param(
+        [System.IO.FileSystemInfo]$Item,
+        [object]$Metadata
+    )
 
     if ($Item.PSIsContainer) {
+        if ($Metadata -and $Metadata.IsGitRepository) {
+            return [string][char]0xf1d3
+        }
+
         $directoryIcons = @{
             '.cache' = [string][char]0xf013
             '.config' = [string][char]0xe615
@@ -241,9 +248,16 @@ function Get-CleanCliNativeIcon {
 }
 
 function Get-CleanCliAsciiIcon {
-    param([System.IO.FileSystemInfo]$Item)
+    param(
+        [System.IO.FileSystemInfo]$Item,
+        [object]$Metadata
+    )
 
     if ($Item.PSIsContainer) {
+        if ($Metadata -and $Metadata.IsGitRepository) {
+            return '[G]'
+        }
+
         return '[D]'
     }
 
@@ -268,14 +282,38 @@ function ConvertTo-CleanCliAnsiColor {
     }
 }
 
+function Get-CleanCliDirectoryGitColor {
+    param([object]$Metadata)
+
+    if (-not $Metadata -or -not $Metadata.IsGitRepository) {
+        return ''
+    }
+
+    switch ($Metadata.StatusState) {
+        'clean' { return ConvertTo-CleanCliAnsiColor -Hex '7CFF9B' }
+        'pending' { return ConvertTo-CleanCliAnsiColor -Hex 'FFD166' }
+        'dirty' { return ConvertTo-CleanCliAnsiColor -Hex 'FF6B6B' }
+    }
+
+    ConvertTo-CleanCliAnsiColor -Hex '7DD3FC'
+}
+
 function Get-CleanCliIconColor {
-    param([System.IO.FileSystemInfo]$Item)
+    param(
+        [System.IO.FileSystemInfo]$Item,
+        [object]$Metadata
+    )
 
     if ($env:NO_COLOR) {
         return ''
     }
 
     if ($Item.PSIsContainer) {
+        $gitColor = Get-CleanCliDirectoryGitColor -Metadata $Metadata
+        if ($gitColor) {
+            return $gitColor
+        }
+
         $directoryColors = @{
             '.cache' = '87ECAF'
             '.config' = '87CEAF'
@@ -334,20 +372,49 @@ function Get-CleanCliIconColor {
     ConvertTo-CleanCliAnsiColor -Hex 'D3D3D3'
 }
 
+function Format-CleanCliDirectoryGitDetails {
+    param([object]$Metadata)
+
+    if (-not $Metadata -or -not $Metadata.IsGitRepository -or -not $Metadata.Branch) {
+        return ''
+    }
+
+    $parts = @($Metadata.Branch)
+    if ($Metadata.StatusState -in @('clean', 'pending', 'dirty')) {
+        if ($Metadata.Ahead -gt 0) {
+            $parts += "ahead $($Metadata.Ahead)"
+        }
+        if ($Metadata.Behind -gt 0) {
+            $parts += "behind $($Metadata.Behind)"
+        }
+        if ($Metadata.StatusSummary) {
+            $parts += $Metadata.StatusSummary
+        }
+    }
+
+    '[' + ($parts -join ' ') + ']'
+}
+
 function ConvertTo-CleanCliIconItem {
     param(
         [System.IO.FileSystemInfo]$Item,
-        [string]$IconMode
+        [string]$IconMode,
+        [object]$Metadata
     )
 
     $icon = if ($IconMode -eq 'ascii') {
-        Get-CleanCliAsciiIcon -Item $Item
+        Get-CleanCliAsciiIcon -Item $Item -Metadata $Metadata
     }
     else {
-        Get-CleanCliNativeIcon -Item $Item
+        Get-CleanCliNativeIcon -Item $Item -Metadata $Metadata
     }
-    $plainDisplayName = "$icon  $($Item.Name)"
-    $color = Get-CleanCliIconColor -Item $Item
+    $name = $Item.Name
+    $gitDetails = Format-CleanCliDirectoryGitDetails -Metadata $Metadata
+    if ($gitDetails) {
+        $name = '{0} {1}' -f $Item.Name, $gitDetails
+    }
+    $plainDisplayName = "$icon  $name"
+    $color = Get-CleanCliIconColor -Item $Item -Metadata $Metadata
     $displayName = if ($color) {
         "$color$plainDisplayName$([char]27)[0m"
     }
@@ -361,6 +428,14 @@ function ConvertTo-CleanCliIconItem {
         Length = if ($Item.PSIsContainer) { $null } else { $Item.Length }
         Icon = $icon
         Name = $Item.Name
+        GitBranch = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.Branch } else { '' }
+        IsGitRepository = [bool]($Metadata -and $Metadata.IsGitRepository)
+        MetadataSource = if ($Metadata) { $Metadata.DataSource } else { '' }
+        GitStatusState = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.StatusState } else { '' }
+        GitStatusSummary = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.StatusSummary } else { '' }
+        GitAhead = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.Ahead } else { 0 }
+        GitBehind = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.Behind } else { 0 }
+        GitStatusDurationMilliseconds = if ($Metadata -and $Metadata.IsGitRepository) { $Metadata.GitStatusDurationMilliseconds } else { 0 }
         DisplayName = $displayName
         FullName = $Item.FullName
     }
@@ -419,13 +494,23 @@ function Get-CleanCliChildItem {
         return Invoke-CleanCliTerminalIconsChildItem -Path $Path -Force:$Force
     }
 
-    if ($Force) {
-        return Get-ChildItem -LiteralPath $Path -Force | ForEach-Object {
-            ConvertTo-CleanCliIconItem -Item $_ -IconMode $iconMode
-        }
+    Receive-CleanCliDirectoryReadAhead
+    $items = if ($Force) {
+        @(Get-ChildItem -LiteralPath $Path -Force)
+    }
+    else {
+        @(Get-ChildItem -LiteralPath $Path)
     }
 
-    Get-ChildItem -LiteralPath $Path | ForEach-Object {
-        ConvertTo-CleanCliIconItem -Item $_ -IconMode $iconMode
+    $result = foreach ($item in $items) {
+        $metadata = $null
+        if ($item.PSIsContainer) {
+            $metadata = Get-CleanCliDirectoryMetadataForPath -Path $item.FullName
+        }
+
+        ConvertTo-CleanCliIconItem -Item $item -IconMode $iconMode -Metadata $metadata
     }
+
+    Start-CleanCliDirectoryReadAhead -Path $Path
+    return $result
 }

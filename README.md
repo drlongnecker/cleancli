@@ -189,6 +189,10 @@ The bundled profile does not import `Terminal-Icons` at startup. When `IconMode 
 
 CleanCli native icons avoid known legacy Nerd Font codepoints from old Terminal-Icons `nf-mdi-*` mappings that can render as invalid symbols in current fonts.
 
+When icon mode is `native` or `ascii`, CleanCli can enrich directory listings with fresh git repository metadata. Repository folders render with a distinct marker, blue-cyan repo color, and branch suffix, for example `repo [main]` or `[G] repo [main]` in ASCII mode. CleanCli never uses cached directory entries as listing output; `Get-ChildItem` still reads the current directory every time, and stale branch or status metadata is dropped instead of rendered.
+
+Directory metadata read-ahead is controlled by `DirectoryReadAheadMode`, `DirectoryReadAheadDepth`, `DirectoryMetadataCacheMilliseconds`, `DirectoryReadAheadMaxDirectories`, `DirectoryReadAheadDebounceMilliseconds`, and `DirectoryGitStatusMode`. The default keeps repository listings branch-only. Set `DirectoryGitStatusMode = 'async'` to opt into background `git status --porcelain --branch` calls that add clean/pending/dirty colors and compact counts such as `repo [main ahead 2 ?1 +1 ~1 -1]` after the async cache refresh completes.
+
 ## Key Bindings
 
 - `Tab`: menu completion
@@ -235,6 +239,8 @@ Measure-CleanCliStartup -Iterations 5
 `Get-CleanCliStatus` includes `LastGitDurationMilliseconds` so slow repositories can be identified from the last bounded git call. `LastGit` includes the repo root, git dir, cache key, exact git arguments, suppression count and threshold, data source (`none`, `branch-only`, `full`, `cached`, `last-successful`, or `suppressed`), and the parsed status counters (`Added`, `Modified`, `Deleted`, `Moved`, `Unmerged`, `Untracked`, and `StatusSummary`).
 
 `Get-CleanCliIconDiagnostics` reports the configured and effective icon mode, Nerd Font detection, Terminal-Icons availability and load state, and the current `ls` and `dir` alias routing.
+
+`Get-CleanCliStatus` also reports directory metadata cache size, pending and active read-ahead counts, the last read-ahead path, duration, skipped reason, git status count, aggregate git status duration, and git status timeout count.
 
 `Measure-CleanCliStartup` reports separate timings for the no-profile baseline, CleanCli import, CleanCli enable, Terminal-Icons import, CleanCli plus Terminal-Icons, normal profile load, and forced profile load. Use `-Iterations` to add min/average/max statistics for each layer and reduce noise from one-off Windows process startup variance.
 
