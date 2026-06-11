@@ -169,7 +169,10 @@ function Set-CleanCliGitLastSuccessfulInfo {
         [object]$Info
     )
 
-    $script:CleanCliGitLastSuccessful[(Get-CleanCliGitLastSuccessfulKey -Repository $Repository)] = $Info
+    $script:CleanCliGitLastSuccessful[(Get-CleanCliGitLastSuccessfulKey -Repository $Repository)] = @{
+        Info = $Info
+        At   = Get-Date
+    }
 }
 
 function Copy-CleanCliGitInfoForFallback {
@@ -440,7 +443,13 @@ function Get-CleanCliGitLastSuccessfulInfo {
         return $null
     }
 
-    Copy-CleanCliGitInfoForFallback -Repository $Repository -Info $script:CleanCliGitLastSuccessful[$key] -Branch $Branch -GitInvoked $GitInvoked -TimedOut $TimedOut -GitSuppressed $GitSuppressed
+    $entry = $script:CleanCliGitLastSuccessful[$key]
+    $maxAge = [int]$script:CleanCliOptions.GitLastSuccessfulMaxAgeMilliseconds
+    if ($maxAge -gt 0 -and ((Get-Date) - $entry.At).TotalMilliseconds -gt $maxAge) {
+        return $null
+    }
+
+    Copy-CleanCliGitInfoForFallback -Repository $Repository -Info $entry.Info -Branch $Branch -GitInvoked $GitInvoked -TimedOut $TimedOut -GitSuppressed $GitSuppressed
 }
 
 function Test-CleanCliGitStatusSuppressed {

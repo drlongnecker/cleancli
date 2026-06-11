@@ -66,6 +66,7 @@ Example:
     GitIgnoreSubmodules = 'none'
     GitStatusMode = 'full'
     GitDivergenceMode = 'none'
+    GitCompletionEnabled = $true
     DirectoryReadAheadMode = 'metadata'
     DirectoryReadAheadDepth = 1
     DirectoryMetadataCacheMilliseconds = 5000
@@ -313,6 +314,8 @@ Use `Set-CleanCliLocation` for directory jumping. It records visited directories
 The old profile helpers now live as module commands: `Show-CleanCliGitLog` for the decorated git log and `Open-CleanCliExplorer` for opening Explorer at a path.
 
 ## Git Behavior
+
+CleanCli registers native tab completion for `git` and `git.exe` by default. Completion is loaded without invoking Git during module import and discovers commands, aliases, options, refs, remotes, stashes, and changed files only when Tab completion requests them. Set `GitCompletionEnabled = $false` to leave Git completion disabled while keeping the CleanCli prompt active.
 
 CleanCLI walks parent directories looking for `.git`. Outside a repository it returns immediately and does not start `git.exe`.
 

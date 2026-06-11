@@ -56,6 +56,7 @@ Describe 'CleanCli installer script' {
             'Config.ps1',
             'DirectoryCache.ps1',
             'Git.ps1',
+            'GitCompletion.ps1',
             'Icons.ps1',
             'Listing.ps1',
             'Navigation.ps1',
@@ -138,6 +139,7 @@ Describe 'CleanCli module behavior' {
             $options.GitIgnoreSubmodules | Should Be 'none'
             $options.GitStatusMode | Should Be 'full'
             $options.GitDivergenceMode | Should Be 'none'
+            $options.GitCompletionEnabled | Should Be $true
             $options.DirectoryReadAheadMode | Should Be 'metadata'
             $options.DirectoryReadAheadDepth | Should Be 1
             $options.DirectoryMetadataCacheMilliseconds | Should Be 5000
@@ -175,6 +177,140 @@ Describe 'CleanCli module behavior' {
         finally {
             Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'parses Git completion command names and aliases lazily and caches stable metadata' {
+        InModuleScope CleanCli {
+            $script:CleanCliGitCompletionCache = @{}
+            $script:CleanCliState.GitCompletionProcessCount = 0
+            $script:CleanCliGitCompletionCommand = {
+                param($Arguments, $WorkingDirectory)
+                switch ($Arguments -join ' ') {
+                    '--version' { 'git version 2.51.0.windows.1' }
+                    'help -a' { @('   add        Add file contents', '   switch     Switch branches', '   worktree   Manage working trees') }
+                    'config --get-regexp ^alias\.' { 'alias.sw switch' }
+                    'switch -h' { '    -c, -C, --[no-]create <branch>' }
+                }
+            }
+            try {
+                $tokens = $null
+                $errors = $null
+                $root = [System.Management.Automation.Language.Parser]::ParseInput('git sw', [ref]$tokens, [ref]$errors)
+                $ast = $root.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)
+
+                $first = @(Get-CleanCliGitCompletionCandidates -WordToComplete sw -CommandAst $ast)
+                $second = @(Get-CleanCliGitCompletionCandidates -WordToComplete sw -CommandAst $ast)
+                $options = @(Get-CleanCliGitOptions -Command switch)
+
+                ($first -contains 'switch') | Should Be $true
+                ($first -contains 'sw') | Should Be $true
+                $second.Count | Should Be $first.Count
+                ($options -contains '-c') | Should Be $true
+                ($options -contains '-C') | Should Be $true
+                ($options -contains '--create') | Should Be $true
+                ($options -contains '--no-create') | Should Be $true
+                $script:CleanCliState.GitCompletionProcessCount | Should Be 4
+            }
+            finally {
+                $script:CleanCliGitCompletionCommand = $null
+                $script:CleanCliGitCompletionCache = @{}
+            }
+        }
+    }
+
+    It 'uses AST context for modern Git refs, remotes, files, worktrees, and option values' {
+        InModuleScope CleanCli {
+            $script:CleanCliGitCompletionCache = @{}
+            $script:CleanCliGitCompletionCommand = {
+                param($Arguments, $WorkingDirectory)
+                switch ($Arguments -join ' ') {
+                    'config --get-regexp ^alias\.' { @() }
+                    'for-each-ref --format=%(refname:short) refs/heads refs/remotes refs/tags' { @('feature/topic', 'origin/feature/topic', 'v1.0') }
+                    'for-each-ref --format=%(refname:short) refs/heads refs/remotes' { @('feature/topic', 'origin/feature/topic') }
+                    'remote' { @('origin', 'upstream') }
+                    'diff --name-only --diff-filter=DMRTUXB' { @('src/file one.ps1', 'src/other.ps1') }
+                    'ls-files --modified --deleted --others --exclude-standard' { @('new file.txt', 'src/other.ps1') }
+                    'stash list --format=%gd' { @('stash@{0}', 'stash@{1}') }
+                }
+            }
+            try {
+                function Get-TestGitAst([string]$Text) {
+                    $tokens = $null
+                    $errors = $null
+                    $root = [System.Management.Automation.Language.Parser]::ParseInput($Text, [ref]$tokens, [ref]$errors)
+                    $root.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)
+                }
+
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete 'fea' -CommandAst (Get-TestGitAst 'git switch fea')) -contains 'feature/topic') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete '' -CommandAst (Get-TestGitAst 'git push origin ')) -contains 'feature/topic') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete 'up' -CommandAst (Get-TestGitAst 'git fetch up')) -contains 'upstream') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete 'src/' -CommandAst (Get-TestGitAst 'git restore src/')) -contains 'src/file one.ps1') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete 'new' -CommandAst (Get-TestGitAst 'git add new')) -contains 'new file.txt') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete 'a' -CommandAst (Get-TestGitAst 'git worktree a')) -contains 'add') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete 'ap' -CommandAst (Get-TestGitAst 'git stash ap')) -contains 'apply') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete '--source=fea' -CommandAst (Get-TestGitAst 'git restore --source=fea')) -contains '--source=feature/topic') | Should Be $true
+                (@(Get-CleanCliGitCompletionCandidates -WordToComplete '--conflict=d' -CommandAst (Get-TestGitAst 'git switch --conflict=d')) -contains '--conflict=diff3') | Should Be $true
+            }
+            finally {
+                Remove-Item Function:\Get-TestGitAst -ErrorAction SilentlyContinue
+                $script:CleanCliGitCompletionCommand = $null
+                $script:CleanCliGitCompletionCache = @{}
+            }
+        }
+    }
+
+    It 'quotes Git completion values only when PowerShell syntax requires it' {
+        InModuleScope CleanCli {
+            (ConvertTo-CleanCliGitCompletionText -Text 'feature/topic') | Should Be 'feature/topic'
+            (ConvertTo-CleanCliGitCompletionText -Text 'file one.txt') | Should Be "'file one.txt'"
+            (ConvertTo-CleanCliGitCompletionText -Text "owner's file.txt") | Should Be "'owner''s file.txt'"
+        }
+    }
+
+    It 'returns no Git completions while CleanCli is disabled or completion is disabled' {
+        InModuleScope CleanCli {
+            $tokens = $null
+            $errors = $null
+            $root = [System.Management.Automation.Language.Parser]::ParseInput('git sw', [ref]$tokens, [ref]$errors)
+            $ast = $root.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)
+            $originalEnabled = $script:CleanCliState.Enabled
+            $originalCompletionEnabled = $script:CleanCliOptions.GitCompletionEnabled
+            try {
+                $script:CleanCliState.Enabled = $false
+                @(Invoke-CleanCliGitCompletion -WordToComplete sw -CommandAst $ast -CursorPosition 6).Count | Should Be 0
+                $script:CleanCliState.Enabled = $true
+                $script:CleanCliOptions.GitCompletionEnabled = $false
+                @(Invoke-CleanCliGitCompletion -WordToComplete sw -CommandAst $ast -CursorPosition 6).Count | Should Be 0
+            }
+            finally {
+                $script:CleanCliState.Enabled = $originalEnabled
+                $script:CleanCliOptions.GitCompletionEnabled = $originalCompletionEnabled
+            }
+        }
+    }
+
+    It 'bounds Git completion calls and records timeout diagnostics' {
+        InModuleScope CleanCli {
+            $script:CleanCliGitCompletionCache = @{}
+            $script:CleanCliState.GitCompletionTimeoutCount = 0
+            $script:CleanCliGitCompletionCommand = {
+                param($Arguments, $WorkingDirectory)
+                [pscustomobject]@{ Lines = @(); TimedOut = $true; ExitCode = -1 }
+            }
+            try {
+                $tokens = $null
+                $errors = $null
+                $root = [System.Management.Automation.Language.Parser]::ParseInput('git sw', [ref]$tokens, [ref]$errors)
+                $ast = $root.Find({ param($node) $node -is [System.Management.Automation.Language.CommandAst] }, $true)
+
+                @(Get-CleanCliGitCompletionCandidates -WordToComplete sw -CommandAst $ast).Count | Should Be 0
+                $script:CleanCliState.GitCompletionTimeoutCount | Should BeGreaterThan 0
+            }
+            finally {
+                $script:CleanCliGitCompletionCommand = $null
+                $script:CleanCliGitCompletionCache = @{}
+            }
         }
     }
 
@@ -825,6 +961,7 @@ Describe 'CleanCli module behavior' {
             InModuleScope CleanCli {
                 $script:CleanCliGitCache = @{}
                 $script:CleanCliGitCacheMilliseconds = 0
+                $script:CleanCliGitLastSuccessful = @{}
                 $script:CleanCliSlowGitRepositories = @{}
                 $script:CleanCliGitCalls = 0
                 $script:CleanCliGitCommand = {
@@ -858,6 +995,49 @@ Describe 'CleanCli module behavior' {
                 $fourth.Working | Should Be 2
                 $fourth.Staged | Should Be 1
                 $fourth.DataSource | Should Be 'last-successful'
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_TEST_PATH -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
+    It 'does not use last-successful data older than GitLastSuccessfulMaxAgeMilliseconds' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $gitDir = Join-Path $tempRoot '.git'
+        New-Item -ItemType Directory -Path $gitDir | Out-Null
+        Set-Content -LiteralPath (Join-Path $gitDir 'HEAD') -Value 'ref: refs/heads/main' -Encoding ASCII
+
+        try {
+            $env:CLEANCLI_TEST_PATH = $tempRoot
+            InModuleScope CleanCli {
+                $script:CleanCliGitCache = @{}
+                $script:CleanCliGitCacheMilliseconds = 0
+                $script:CleanCliGitLastSuccessful = @{}
+                $script:CleanCliSlowGitRepositories = @{}
+                $script:CleanCliGitCalls = 0
+                $script:CleanCliGitCommand = {
+                    $script:CleanCliGitCalls++
+                    if ($script:CleanCliGitCalls -eq 1) {
+                        return " M changed.txt"
+                    }
+                    return $null
+                }
+
+                # First call succeeds; populates last-successful with current time
+                $first = Get-CleanCliGitInfo -Path $env:CLEANCLI_TEST_PATH
+                $first.Dirty | Should Be $true
+
+                # Age the last-successful entry beyond the configured limit
+                $key = "$($env:CLEANCLI_TEST_PATH)|$($script:CleanCliOptions.GitUntrackedMode)|$($script:CleanCliOptions.GitIgnoreSubmodules)"
+                $script:CleanCliGitLastSuccessful[$key].At = (Get-Date).AddSeconds(-60)
+                $script:CleanCliOptions['GitLastSuccessfulMaxAgeMilliseconds'] = 30000
+
+                # Second call: git times out; last-successful is expired and must not be used
+                $second = Get-CleanCliGitInfo -Path $env:CLEANCLI_TEST_PATH
+                $second.Dirty | Should Be $false
+                $second.DataSource | Should Not Be 'last-successful'
             }
         }
         finally {

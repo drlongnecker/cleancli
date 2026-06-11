@@ -56,6 +56,7 @@ function ConvertTo-CleanCliOptionValue {
     switch ($Name) {
         'GitTimeoutMilliseconds' { return [int]$Value }
         'GitCacheMilliseconds' { return [int]$Value }
+        'GitLastSuccessfulMaxAgeMilliseconds' { return [int]$Value }
         'GitSlowSuppressionTimeouts' { return [int]$Value }
         'GitUntrackedMode' {
             $mode = [string]$Value
@@ -85,6 +86,7 @@ function ConvertTo-CleanCliOptionValue {
             }
             return $mode
         }
+        'GitCompletionEnabled' { return [bool]$Value }
         'DirectoryReadAheadMode' {
             $mode = [string]$Value
             if ($mode -notin @('disabled', 'metadata')) {
@@ -583,6 +585,9 @@ function Set-CleanCliOption {
     Save-CleanCliConfigFile
     if ($Name -eq 'IconMode' -or $Name -eq 'AsciiMode') {
         Set-CleanCliIconAliases
+    }
+    if ($Name -eq 'GitCompletionEnabled' -and $script:CleanCliOptions[$Name] -and $script:CleanCliState.Enabled) {
+        Register-CleanCliGitCompletion
     }
 
     [pscustomobject]$script:CleanCliOptions
