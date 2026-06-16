@@ -159,6 +159,15 @@ function Resolve-CleanCliListingInput {
         }
     }
 
+    if ($Path[0] -eq '*' -and $Path.Length -gt 1 -and $Path[1] -ne '.') {
+        return [pscustomobject]@{
+            Path = '.'
+            Qualifier = $Path
+            NameLike = ''
+            FileOnly = $false
+        }
+    }
+
     if ($Path.IndexOfAny([char[]]@('*', '?')) -ge 0) {
         $parentPath = Split-Path -Path $Path -Parent
         $nameLike = Split-Path -Path $Path -Leaf
@@ -352,6 +361,10 @@ function ConvertFrom-CleanCliQualifier {
         }
 
         switch ($char) {
+            '*' {
+                $index++
+                continue
+            }
             '^' {
                 $negate = -not $negate
                 $index++
@@ -442,7 +455,7 @@ function Test-CleanCliQualifierNamePatternStart {
             return $true
         }
         '/' {
-            return -not ($Index -eq 1 -and $Qualifier[0] -eq '.')
+            return -not ($Index -eq 1 -and ($Qualifier[0] -eq '.' -or $Qualifier[0] -eq '*'))
         }
         '@' {
             return $false

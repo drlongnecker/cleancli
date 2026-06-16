@@ -2560,6 +2560,55 @@ Describe 'CleanCli module behavior' {
         }
     }
 
+    It 'treats * prefix as type-agnostic qualifier covering files and directories' {
+        $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
+        $recentDir  = Join-Path $tempRoot 'recent-dir'
+        $oldDir     = Join-Path $tempRoot 'old-dir'
+        New-Item -ItemType Directory -Path $recentDir | Out-Null
+        New-Item -ItemType Directory -Path $oldDir    | Out-Null
+        Set-Content -LiteralPath (Join-Path $tempRoot 'recent.txt') -Value 'r' -Encoding ASCII
+        Set-Content -LiteralPath (Join-Path $tempRoot 'old.txt')    -Value 'o' -Encoding ASCII
+        (Get-Item -LiteralPath $oldDir).LastWriteTime                         = (Get-Date).AddDays(-10)
+        (Get-Item -LiteralPath (Join-Path $tempRoot 'old.txt')).LastWriteTime = (Get-Date).AddDays(-10)
+
+        try {
+            $env:CLEANCLI_CONFIG_PATH = Join-Path $tempRoot 'CleanCli.config.psd1'
+            $env:CLEANCLI_TEST_PATH   = $tempRoot
+            InModuleScope CleanCli {
+                Initialize-CleanCliOptions | Out-Null
+                Set-CleanCliOption -Name IconMode -Value disabled | Out-Null
+
+                Push-Location $env:CLEANCLI_TEST_PATH
+                try {
+                    # *m-7d: files AND directories modified within 7 days (no type restriction)
+                    $results = Get-CleanCliChildItem '*m-7d'
+                    # Verify both types are present (not just files or just directories)
+                    $filesInResults = @($results | Where-Object { -not $_.PSIsContainer })
+                    $dirsInResults = @($results | Where-Object { $_.PSIsContainer })
+                    # Should have files and directories (recent.txt is recent, recent-dir is recent)
+                    ($filesInResults | Measure-Object).Count | Should BeGreaterThan 0
+                    ($dirsInResults | Measure-Object).Count | Should Be 1
+                    # Verify recent items are present
+                    ($filesInResults.Name -contains 'recent.txt') | Should Be $true
+                    ($dirsInResults.Name -contains 'recent-dir') | Should Be $true
+
+                    # *.txt must still be a glob (files only)
+                    $glob = Get-CleanCliChildItem '*.txt' | Sort-Object Name
+                    $glob.Name -join ',' | Should Be 'old.txt,recent.txt'
+                    $glob | ForEach-Object { $_.PSIsContainer | Should Be $false }
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+        finally {
+            Remove-Item Env:\CLEANCLI_CONFIG_PATH -ErrorAction SilentlyContinue
+            Remove-Item Env:\CLEANCLI_TEST_PATH   -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath $tempRoot -Recurse -Force
+        }
+    }
+
     It 'treats trailing qualifier-looking text as a name glob when it is not a valid token' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path (Join-Path $tempRoot '.config') | Out-Null

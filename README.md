@@ -213,7 +213,7 @@ Directory metadata read-ahead is controlled by `DirectoryReadAheadMode`, `Direct
 
 CleanCli adds chainable listing filters for common `ls` workflows. New users can use explicit PowerShell flags. Advanced users can use compact zsh-style qualifier strings. `-Qualifier` is the explicit qualifier form. A qualifier-looking positional string is the implicit shorthand.
 
-PowerShell does not preserve quote characters when it calls a function, so CleanCli cannot literally detect whether an argument was quoted. Instead, if the first positional argument is not an existing path and starts with qualifier syntax such as `/`, `.`, `@`, `^`, or `[`, CleanCli treats it as a qualifier against the current directory. Most qualifier strings work without quotes. Keep quotes around `@` and slice qualifiers such as `Om[1,10]` because PowerShell parses those before CleanCli receives the argument.
+PowerShell does not preserve quote characters when it calls a function, so CleanCli cannot literally detect whether an argument was quoted. Instead, if the first positional argument is not an existing path and starts with qualifier syntax such as `*`, `/`, `.`, `@`, `^`, or `[`, CleanCli treats it as a qualifier against the current directory. Most qualifier strings work without quotes. Keep quotes around `@` and slice qualifiers such as `Om[1,10]` because PowerShell parses those before CleanCli receives the argument.
 
 ```powershell
 ls cleancli             # path form: lists the cleancli directory
@@ -224,6 +224,7 @@ ls ..*                  # implicit qualifier: lists dotfiles such as .gitignore
 ls /.*                  # implicit qualifier: lists dot directories such as .config
 ls -Qualifier .m-7      # explicit qualifier: lists files modified within the last 7 days
 ls .a+2                 # implicit qualifier: lists files accessed more than 2 days ago
+ls *m-7Om               # implicit qualifier: lists files and directories modified within the last 7 days, newest first
 ls -r .L+100k*.log      # recursive qualifier: lists .log files larger than 100 KB
 ls -r */tmp* .L+100k*.log # recursive directory filter plus file qualifier
 ```
@@ -232,6 +233,7 @@ ls -r */tmp* .L+100k*.log # recursive directory filter plus file qualifier
 | --- | --- | --- | --- |
 | Directories only | `ls -Directory` | `ls -Qualifier /` | `/` means directory. |
 | Files only | `ls -File` | `ls -Qualifier .` | `.` means file. |
+| Files and directories | `ls` | `ls -Qualifier '*'` | `*` is the any-type prefix. Compose it with time, size, sort, or slice qualifiers in an implicit positional string when you want both files and directories: `ls *m-7Om`. |
 | Symlinks or reparse points | `ls -Symlink` | `ls -Qualifier '@'` | Uses Windows reparse point metadata. |
 | Empty directories | `ls -Directory -Empty` | `ls -Qualifier /^F` | `F` means non-empty directory, so `^F` means not non-empty. |
 | Non-empty directories | `ls -Directory -NonEmpty` | `ls -Qualifier /F` | `F` applies to directories. |
@@ -256,7 +258,8 @@ Time qualifiers use `-` for "within" and `+` for "before/older than". A bare `m`
 | Modified within 45 seconds | `ls -ModifiedWithin 45s` | `ls -Qualifier ms-45` | `ms` means modified seconds. |
 | Accessed within 2 days | `ls -AccessedWithin 2d` | `ls -Qualifier a-2` | `a` means access time. |
 | Accessed more than 2 days ago | `ls -AccessedBefore 2d` | `ls -Qualifier a+2` | Uses `LastAccessTime`. |
-| Files and directories accessed more than 2 days ago | `ls -File -AccessedBefore 2d; ls -Directory -AccessedBefore 2d` | `ls -Qualifier ./a+2` | Type qualifiers combine as a union before the time filter. |
+| Files and directories modified within 7 days | `ls -ModifiedWithin 7d` | `ls *m-7` | `*` makes the time qualifier work as an implicit positional string. Without `*`, `m-7` is not recognized as a qualifier prefix and is treated as a path. |
+| Files and directories accessed more than 2 days ago | `ls -File -AccessedBefore 2d; ls -Directory -AccessedBefore 2d` | `ls *a+2` or `ls -Qualifier ./a+2` | `*` is the concise any-type prefix; `./` is the explicit union form. |
 
 Size qualifiers use `L`. `L+` means larger than, and `L-` means smaller than. Suffixes `k`, `m`, and `g` mean KB, MB, and GB.
 
@@ -288,6 +291,7 @@ Useful combinations:
 | Non-empty project folders starting with `src` | `ls -Directory -NonEmpty -NameLike src*` | `ls -Qualifier /Fsrc*` |
 | Largest five files in the current directory | `ls -File -Sort size -Descending -First 5` | `ls -Qualifier '.OL[1,5]'` |
 | Files modified in the last week, newest first | `ls -File -ModifiedWithin 7d -Sort modified -Descending` | `ls -Qualifier .m-7Om` |
+| Files and directories modified this week, newest first | `ls -ModifiedWithin 7d -Sort modified -Descending` | `ls *m-7Om` |
 | Directory names starting with `clea` | `ls -Directory -NameLike clea*` | `ls /clea*` |
 
 Recursive listings use `-Recurse` or `-r`. Without a directory selector, the item qualifier applies across the full tree. With a directory selector, CleanCli first finds matching directories, then applies the item qualifier to files directly inside those directories. A selector without a slash, such as `tmp*`, only matches top-level directories. A selector with a slash, such as `*/tmp*` or `*/extensions*`, is matched against `./relative/path`, so it can match top-level and nested directories. Recursive icon listings group results by directory while keeping `Name` and `FullName` available for pipeline commands.
