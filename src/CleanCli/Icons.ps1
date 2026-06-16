@@ -567,9 +567,16 @@ function Get-CleanCliChildItem {
     if (-not $Recurse -and -not $RecurseDirectory) {
         Receive-CleanCliDirectoryReadAhead
     }
-    $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
 
+    $swGci = [System.Diagnostics.Stopwatch]::StartNew()
+    $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
+    $swGci.Stop()
+
+    $swFilter = [System.Diagnostics.Stopwatch]::StartNew()
     $filteredItems = Invoke-CleanCliListingQuery -Items $items -Query $query
+    $swFilter.Stop()
+
+    $swEnrich = [System.Diagnostics.Stopwatch]::StartNew()
     $result = foreach ($item in $filteredItems) {
         $metadata = $null
         if ($item.PSIsContainer -and -not $Recurse -and -not $RecurseDirectory) {
@@ -578,6 +585,9 @@ function Get-CleanCliChildItem {
 
         ConvertTo-CleanCliIconItem -Item $item -IconMode $iconMode -Metadata $metadata -Recursive:$Recurse
     }
+    $swEnrich.Stop()
+
+    Write-Verbose "cleancli perf: gci=$($swGci.Elapsed.TotalMilliseconds.ToString('F1'))ms filter=$($swFilter.Elapsed.TotalMilliseconds.ToString('F1'))ms enrich=$($swEnrich.Elapsed.TotalMilliseconds.ToString('F1'))ms items=$($items.Count) filtered=$($filteredItems.Count)"
 
     if (-not $Recurse -and -not $RecurseDirectory) {
         Start-CleanCliDirectoryReadAhead -Path $Path

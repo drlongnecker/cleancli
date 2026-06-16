@@ -691,6 +691,13 @@ function Where-CleanCliListingItem {
         [object]$Query
     )
 
+    begin {
+        $modifiedWithinCutoff  = if ($Query.ModifiedWithin)  { [DateTime]::Now - $Query.ModifiedWithin  } else { $null }
+        $modifiedBeforeCutoff  = if ($Query.ModifiedBefore)  { [DateTime]::Now - $Query.ModifiedBefore  } else { $null }
+        $accessedWithinCutoff  = if ($Query.AccessedWithin)  { [DateTime]::Now - $Query.AccessedWithin  } else { $null }
+        $accessedBeforeCutoff  = if ($Query.AccessedBefore)  { [DateTime]::Now - $Query.AccessedBefore  } else { $null }
+    }
+
     process {
         if ($Query.TypeFilters.Count -gt 0) {
             $matchesType = $false
@@ -707,11 +714,10 @@ function Where-CleanCliListingItem {
             if ($isEmpty -notin $Query.EmptyFilters) { return }
         }
 
-        $now = Get-Date
-        if ($Query.ModifiedWithin -and $Item.LastWriteTime -lt $now.Subtract($Query.ModifiedWithin)) { return }
-        if ($Query.ModifiedBefore -and $Item.LastWriteTime -gt $now.Subtract($Query.ModifiedBefore)) { return }
-        if ($Query.AccessedWithin -and $Item.LastAccessTime -lt $now.Subtract($Query.AccessedWithin)) { return }
-        if ($Query.AccessedBefore -and $Item.LastAccessTime -gt $now.Subtract($Query.AccessedBefore)) { return }
+        if ($modifiedWithinCutoff  -and $Item.LastWriteTime  -lt $modifiedWithinCutoff)  { return }
+        if ($modifiedBeforeCutoff  -and $Item.LastWriteTime  -gt $modifiedBeforeCutoff)  { return }
+        if ($accessedWithinCutoff  -and $Item.LastAccessTime -lt $accessedWithinCutoff)  { return }
+        if ($accessedBeforeCutoff  -and $Item.LastAccessTime -gt $accessedBeforeCutoff)  { return }
         if ($null -ne $Query.LargerThan -and ($Item.PSIsContainer -or $Item.Length -le $Query.LargerThan)) { return }
         if ($null -ne $Query.SmallerThan -and ($Item.PSIsContainer -or $Item.Length -ge $Query.SmallerThan)) { return }
         if ($Query.NameLike -and $Item.Name -notlike $Query.NameLike) { return }
