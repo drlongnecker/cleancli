@@ -1,3 +1,88 @@
+# Static lookup tables - built once at module load, not per-call.
+# Inner block scopes the temp variables so they don't leak into module scope.
+$__ansi = & {
+    $t = @{}
+    foreach ($hex in @(
+        '87ECAF','87CEAF','2391E6','87CEFA','24BFA5','00FBFF','00BFFF','D3D3D3',
+        'F7D72C','FF143C','DB7093','00FF7F','FF4500','00FFFF','CD5C5C',
+        '7CFF9B','FFD166','FF6B6B','7DD3FC','FFD700','98FB98','00CED1',
+        '00FA9A','87CEEB','6495ED'
+    )) {
+        $r = [convert]::ToInt32($hex.Substring(0,2),16)
+        $g = [convert]::ToInt32($hex.Substring(2,2),16)
+        $b = [convert]::ToInt32($hex.Substring(4,2),16)
+        $t[$hex] = "$([char]27)[38;2;${r};${g};${b}m"
+    }
+    $t
+}
+
+$script:CleanCliDirectoryIcons = @{
+    '.cache'           = [string][char]0xf013
+    '.config'          = [string][char]0xe615
+    '.docker'          = [string][char]0xe7b0
+    '.vscode'          = [string][char]0xe70c
+    '.vscode-insiders' = [string][char]0xe70c
+    'contacts'         = [string][char]0xf0c0
+    'desktop'          = [string][char]0xf108
+    'documents'        = [string][char]0xf15c
+    'downloads'        = [string][char]0xf019
+    'favorites'        = [string][char]0xf005
+    'links'            = [string][char]0xf0c1
+    'music'            = [string][char]0xf001
+}
+
+$script:CleanCliDirectoryColors = @{
+    '.cache'           = $__ansi['87ECAF']
+    '.config'          = $__ansi['87CEAF']
+    '.docker'          = $__ansi['2391E6']
+    '.vscode'          = $__ansi['87CEFA']
+    '.vscode-insiders' = $__ansi['24BFA5']
+    'contacts'         = $__ansi['00FBFF']
+    'desktop'          = $__ansi['00FBFF']
+    'documents'        = $__ansi['00BFFF']
+    'downloads'        = $__ansi['D3D3D3']
+    'favorites'        = $__ansi['F7D72C']
+    'links'            = $__ansi['FF143C']
+    'music'            = $__ansi['DB7093']
+    'src'              = $__ansi['00FF7F']
+    'projects'         = $__ansi['00FF7F']
+}
+
+$script:CleanCliWellKnownFileColors = @{
+    '.gitignore'  = $__ansi['FF4500']
+    'README'      = $__ansi['00FFFF']
+    'README.md'   = $__ansi['00FFFF']
+    'README.txt'  = $__ansi['00FFFF']
+    'LICENSE'     = $__ansi['CD5C5C']
+    'LICENSE.md'  = $__ansi['CD5C5C']
+    'LICENSE.txt' = $__ansi['CD5C5C']
+}
+
+$script:CleanCliExtensionColors = @{
+    '.ps1'    = $__ansi['00BFFF']
+    '.psm1'   = $__ansi['00BFFF']
+    '.psd1'   = $__ansi['00BFFF']
+    '.md'     = $__ansi['00BFFF']
+    '.json'   = $__ansi['FFD700']
+    '.xml'    = $__ansi['98FB98']
+    '.txt'    = $__ansi['00CED1']
+    '.exe'    = $__ansi['00FA9A']
+    '.dll'    = $__ansi['87CEEB']
+    '.pdb'    = $__ansi['FFD700']
+    '.config' = $__ansi['6495ED']
+}
+
+$script:CleanCliGitStatusColors = @{
+    'clean'   = $__ansi['7CFF9B']
+    'pending' = $__ansi['FFD166']
+    'dirty'   = $__ansi['FF6B6B']
+    'unknown' = $__ansi['7DD3FC']
+}
+
+$script:CleanCliDefaultColor               = $__ansi['D3D3D3']
+$script:CleanCliLegacyInvalidCodePoints    = [System.Collections.Generic.HashSet[int]]@(0xf5e7, 0xfbc9, 0xfcbe, 0xf832, 0xf872)
+Remove-Variable __ansi  # release the intermediate map; all values are now in the typed tables above
+
 function Get-CleanCliIconMode {
     $options = Get-CleanCliOption
     if ($options.IconMode -eq 'native' -and ($options.AsciiMode -or $env:CLEANCLI_ASCII -eq '1')) {
@@ -160,16 +245,7 @@ function Test-CleanCliIconGlyphSupported {
         return $false
     }
 
-    $codePoint = [int][char]$Icon[0]
-    $legacyInvalidCodePoints = @(
-        0xf5e7
-        0xfbc9
-        0xfcbe
-        0xf832
-        0xf872
-    )
-
-    $codePoint -notin $legacyInvalidCodePoints
+    -not $script:CleanCliLegacyInvalidCodePoints.Contains([int][char]$Icon[0])
 }
 
 function Get-CleanCliIconDiagnostics {
@@ -207,23 +283,9 @@ function Get-CleanCliNativeIcon {
             return [string][char]0xf1d3
         }
 
-        $directoryIcons = @{
-            '.cache' = [string][char]0xf013
-            '.config' = [string][char]0xe615
-            '.docker' = [string][char]0xe7b0
-            '.vscode' = [string][char]0xe70c
-            '.vscode-insiders' = [string][char]0xe70c
-            'contacts' = [string][char]0xf0c0
-            'desktop' = [string][char]0xf108
-            'documents' = [string][char]0xf15c
-            'downloads' = [string][char]0xf019
-            'favorites' = [string][char]0xf005
-            'links' = [string][char]0xf0c1
-            'music' = [string][char]0xf001
-        }
         $key = $Item.Name.ToLowerInvariant()
-        if ($directoryIcons.ContainsKey($key)) {
-            $icon = $directoryIcons[$key]
+        if ($script:CleanCliDirectoryIcons.ContainsKey($key)) {
+            $icon = $script:CleanCliDirectoryIcons[$key]
             if (Test-CleanCliIconGlyphSupported -Icon $icon) {
                 return $icon
             }
@@ -285,13 +347,9 @@ function Get-CleanCliDirectoryGitColor {
         return ''
     }
 
-    switch ($Metadata.StatusState) {
-        'clean' { return ConvertTo-CleanCliAnsiColor -Hex '7CFF9B' }
-        'pending' { return ConvertTo-CleanCliAnsiColor -Hex 'FFD166' }
-        'dirty' { return ConvertTo-CleanCliAnsiColor -Hex 'FF6B6B' }
-    }
-
-    ConvertTo-CleanCliAnsiColor -Hex '7DD3FC'
+    $color = $script:CleanCliGitStatusColors[$Metadata.StatusState]
+    if ($color) { return $color }
+    $script:CleanCliGitStatusColors['unknown']
 }
 
 function Get-CleanCliIconColor {
@@ -310,62 +368,21 @@ function Get-CleanCliIconColor {
             return $gitColor
         }
 
-        $directoryColors = @{
-            '.cache' = '87ECAF'
-            '.config' = '87CEAF'
-            '.docker' = '2391E6'
-            '.vscode' = '87CEFA'
-            '.vscode-insiders' = '24BFA5'
-            'contacts' = '00FBFF'
-            'desktop' = '00FBFF'
-            'documents' = '00BFFF'
-            'downloads' = 'D3D3D3'
-            'favorites' = 'F7D72C'
-            'links' = 'FF143C'
-            'music' = 'DB7093'
-            'src' = '00FF7F'
-            'projects' = '00FF7F'
-        }
         $key = $Item.Name.ToLowerInvariant()
-        if ($directoryColors.ContainsKey($key)) {
-            return ConvertTo-CleanCliAnsiColor -Hex $directoryColors[$key]
-        }
+        $color = $script:CleanCliDirectoryColors[$key]
+        if ($color) { return $color }
 
-        return ConvertTo-CleanCliAnsiColor -Hex 'D3D3D3'
-    }
-
-    $wellKnownFileColors = @{
-        '.gitignore' = 'FF4500'
-        'README' = '00FFFF'
-        'README.md' = '00FFFF'
-        'README.txt' = '00FFFF'
-        'LICENSE' = 'CD5C5C'
-        'LICENSE.md' = 'CD5C5C'
-        'LICENSE.txt' = 'CD5C5C'
-    }
-    if ($wellKnownFileColors.ContainsKey($Item.Name)) {
-        return ConvertTo-CleanCliAnsiColor -Hex $wellKnownFileColors[$Item.Name]
+        return $script:CleanCliDefaultColor
     }
 
-    $extensionColors = @{
-        '.ps1' = '00BFFF'
-        '.psm1' = '00BFFF'
-        '.psd1' = '00BFFF'
-        '.md' = '00BFFF'
-        '.json' = 'FFD700'
-        '.xml' = '98FB98'
-        '.txt' = '00CED1'
-        '.exe' = '00FA9A'
-        '.dll' = '87CEEB'
-        '.pdb' = 'FFD700'
-        '.config' = '6495ED'
-    }
+    $color = $script:CleanCliWellKnownFileColors[$Item.Name]
+    if ($color) { return $color }
+
     $extension = [System.IO.Path]::GetExtension($Item.Name).ToLowerInvariant()
-    if ($extensionColors.ContainsKey($extension)) {
-        return ConvertTo-CleanCliAnsiColor -Hex $extensionColors[$extension]
-    }
+    $color = $script:CleanCliExtensionColors[$extension]
+    if ($color) { return $color }
 
-    ConvertTo-CleanCliAnsiColor -Hex 'D3D3D3'
+    $script:CleanCliDefaultColor
 }
 
 function Format-CleanCliDirectoryGitDetails {
@@ -568,26 +585,15 @@ function Get-CleanCliChildItem {
         Receive-CleanCliDirectoryReadAhead
     }
 
-    $swGci = [System.Diagnostics.Stopwatch]::StartNew()
     $items = Get-CleanCliListingItems -Path $Path -Force:$Force -Recurse:$Recurse -Depth $Depth -RecurseDirectory $RecurseDirectory
-    $swGci.Stop()
-
-    $swFilter = [System.Diagnostics.Stopwatch]::StartNew()
     $filteredItems = Invoke-CleanCliListingQuery -Items $items -Query $query
-    $swFilter.Stop()
-
-    $swEnrich = [System.Diagnostics.Stopwatch]::StartNew()
     $result = foreach ($item in $filteredItems) {
         $metadata = $null
         if ($item.PSIsContainer -and -not $Recurse -and -not $RecurseDirectory) {
             $metadata = Get-CleanCliDirectoryMetadataForPath -Path $item.FullName
         }
-
         ConvertTo-CleanCliIconItem -Item $item -IconMode $iconMode -Metadata $metadata -Recursive:$Recurse
     }
-    $swEnrich.Stop()
-
-    Write-Verbose "cleancli perf: gci=$($swGci.Elapsed.TotalMilliseconds.ToString('F1'))ms filter=$($swFilter.Elapsed.TotalMilliseconds.ToString('F1'))ms enrich=$($swEnrich.Elapsed.TotalMilliseconds.ToString('F1'))ms items=$($items.Count) filtered=$($filteredItems.Count)"
 
     if (-not $Recurse -and -not $RecurseDirectory) {
         Start-CleanCliDirectoryReadAhead -Path $Path
