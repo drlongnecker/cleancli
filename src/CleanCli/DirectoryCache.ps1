@@ -5,6 +5,11 @@ function Resolve-CleanCliDirectoryPath {
         $Path = '.'
     }
 
+    # Already absolute (e.g. from Get-ChildItem .FullName) — skip Test-Path + Resolve-Path
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+
     if (Test-Path -LiteralPath $Path -PathType Container) {
         return [System.IO.Path]::GetFullPath((Resolve-Path -LiteralPath $Path).ProviderPath)
     }
@@ -15,12 +20,12 @@ function Resolve-CleanCliDirectoryPath {
 function Get-CleanCliDirectoryTicks {
     param([string]$Path)
 
-    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    if (-not $item) {
-        return 0
+    try {
+        [System.IO.Directory]::GetLastWriteTimeUtc($Path).Ticks
     }
-
-    $item.LastWriteTimeUtc.Ticks
+    catch {
+        0
+    }
 }
 
 function Get-CleanCliFileTicks {
@@ -97,22 +102,22 @@ function New-CleanCliDirectoryMetadata {
 function Find-CleanCliDirectoryGitRepository {
     param([string]$Path)
 
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        return $null
-    }
-
-    if (Test-CleanCliBareGitDirectory -Path $Path) {
+    # Check .git first — bare repos are rare; this skips one Test-Path per normal directory
+    $gitPath = Join-Path $Path '.git'
+    if (-not (Test-Path -LiteralPath $gitPath)) {
+        # Not a standard repo — check for bare git (uncommon)
+        if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+            return $null
+        }
+        if (-not (Test-CleanCliBareGitDirectory -Path $Path)) {
+            return $null
+        }
         return [pscustomobject]@{
             Root = $Path
             GitDir = $Path
             HeadPath = Join-Path $Path 'HEAD'
             IndexPath = Join-Path $Path 'index'
         }
-    }
-
-    $gitPath = Join-Path $Path '.git'
-    if (-not (Test-Path -LiteralPath $gitPath)) {
-        return $null
     }
 
     $gitItem = Get-Item -LiteralPath $gitPath -Force -ErrorAction SilentlyContinue
@@ -235,14 +240,12 @@ function Test-CleanCliDirectoryMetadataFresh {
         return $false
     }
 
-    if (-not (Test-Path -LiteralPath $Metadata.Path -PathType Container)) {
-        return $false
-    }
-
+    # Check TTL first — if expired, skip all filesystem I/O
     if ((([datetime]::UtcNow) - ([datetime]$Metadata.ScannedAtUtc)).TotalMilliseconds -ge $script:CleanCliOptions.DirectoryMetadataCacheMilliseconds) {
         return $false
     }
 
+    # Directory tick check also handles deletion (missing dir returns 0 ticks which won't match)
     if ((Get-CleanCliDirectoryTicks -Path $Metadata.Path) -ne [int64]$Metadata.DirectoryLastWriteTicks) {
         return $false
     }
@@ -285,34 +288,7 @@ function Get-CleanCliDirectoryMetadataForPath {
     $fullPath = Resolve-CleanCliDirectoryPath -Path $Path
     $cached = $script:CleanCliDirectoryMetadataCache[$fullPath]
     if ($cached -and (Test-CleanCliDirectoryMetadataFresh -Metadata $cached)) {
-        return [pscustomobject]@{
-            Path = $cached.Path
-            IsGitRepository = $cached.IsGitRepository
-            GitRoot = $cached.GitRoot
-            GitDir = $cached.GitDir
-            HeadPath = $cached.HeadPath
-            IndexPath = Get-CleanCliObjectValue -Object $cached -Name IndexPath -DefaultValue ''
-            Branch = $cached.Branch
-            HeadLastWriteTicks = $cached.HeadLastWriteTicks
-            IndexLastWriteTicks = Get-CleanCliObjectValue -Object $cached -Name IndexLastWriteTicks
-            DirectoryLastWriteTicks = $cached.DirectoryLastWriteTicks
-            ScannedAtUtc = $cached.ScannedAtUtc
-            DataSource = 'cache'
-            StatusState = Get-CleanCliObjectValue -Object $cached -Name StatusState -DefaultValue 'unknown'
-            Ahead = Get-CleanCliObjectValue -Object $cached -Name Ahead
-            Behind = Get-CleanCliObjectValue -Object $cached -Name Behind
-            Added = Get-CleanCliObjectValue -Object $cached -Name Added
-            Modified = Get-CleanCliObjectValue -Object $cached -Name Modified
-            Deleted = Get-CleanCliObjectValue -Object $cached -Name Deleted
-            Moved = Get-CleanCliObjectValue -Object $cached -Name Moved
-            Unmerged = Get-CleanCliObjectValue -Object $cached -Name Unmerged
-            Untracked = Get-CleanCliObjectValue -Object $cached -Name Untracked
-            StatusSummary = Get-CleanCliObjectValue -Object $cached -Name StatusSummary -DefaultValue ''
-            GitStatusDurationMilliseconds = Get-CleanCliObjectValue -Object $cached -Name GitStatusDurationMilliseconds
-            GitStatusTimedOut = [bool](Get-CleanCliObjectValue -Object $cached -Name GitStatusTimedOut -DefaultValue $false)
-            GitStatusDataSource = Get-CleanCliObjectValue -Object $cached -Name GitStatusDataSource -DefaultValue 'none'
-            GitStatusScannedAtUtc = Get-CleanCliObjectValue -Object $cached -Name GitStatusScannedAtUtc -DefaultValue $null
-        }
+        return $cached
     }
 
     if ($cached) {

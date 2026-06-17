@@ -683,49 +683,6 @@ function Test-CleanCliListingEmptyDirectory {
     -not [bool](Get-ChildItem -LiteralPath $Item.FullName -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 
-function Where-CleanCliListingItem {
-    param(
-        [Parameter(ValueFromPipeline)]
-        [System.IO.FileSystemInfo]$Item,
-        [Parameter(Mandatory)]
-        [object]$Query
-    )
-
-    begin {
-        $modifiedWithinCutoff  = if ($Query.ModifiedWithin)  { [DateTime]::Now - $Query.ModifiedWithin  } else { $null }
-        $modifiedBeforeCutoff  = if ($Query.ModifiedBefore)  { [DateTime]::Now - $Query.ModifiedBefore  } else { $null }
-        $accessedWithinCutoff  = if ($Query.AccessedWithin)  { [DateTime]::Now - $Query.AccessedWithin  } else { $null }
-        $accessedBeforeCutoff  = if ($Query.AccessedBefore)  { [DateTime]::Now - $Query.AccessedBefore  } else { $null }
-    }
-
-    process {
-        if ($Query.TypeFilters.Count -gt 0) {
-            $matchesType = $false
-            foreach ($type in $Query.TypeFilters) {
-                if ($type -eq 'file' -and -not $Item.PSIsContainer -and -not (Test-CleanCliListingSymlink -Item $Item)) { $matchesType = $true }
-                if ($type -eq 'directory' -and $Item.PSIsContainer) { $matchesType = $true }
-                if ($type -eq 'symlink' -and (Test-CleanCliListingSymlink -Item $Item)) { $matchesType = $true }
-            }
-            if (-not $matchesType) { return }
-        }
-
-        if ($Query.EmptyFilters.Count -gt 0) {
-            $isEmpty = Test-CleanCliListingEmptyDirectory -Item $Item
-            if ($isEmpty -notin $Query.EmptyFilters) { return }
-        }
-
-        if ($modifiedWithinCutoff  -and $Item.LastWriteTime  -lt $modifiedWithinCutoff)  { return }
-        if ($modifiedBeforeCutoff  -and $Item.LastWriteTime  -gt $modifiedBeforeCutoff)  { return }
-        if ($accessedWithinCutoff  -and $Item.LastAccessTime -lt $accessedWithinCutoff)  { return }
-        if ($accessedBeforeCutoff  -and $Item.LastAccessTime -gt $accessedBeforeCutoff)  { return }
-        if ($null -ne $Query.LargerThan -and ($Item.PSIsContainer -or $Item.Length -le $Query.LargerThan)) { return }
-        if ($null -ne $Query.SmallerThan -and ($Item.PSIsContainer -or $Item.Length -ge $Query.SmallerThan)) { return }
-        if ($Query.NameLike -and $Item.Name -notlike $Query.NameLike) { return }
-        if ($Query.Extensions.Count -gt 0 -and ([System.IO.Path]::GetExtension($Item.Name).ToLowerInvariant()) -notin $Query.Extensions) { return }
-
-        $Item
-    }
-}
 
 function Sort-CleanCliListingItem {
     param(
@@ -736,13 +693,19 @@ function Sort-CleanCliListingItem {
 
     $result = @($Items)
     if ($Query.Sort) {
-        $expression = switch ($Query.Sort) {
-            'size' { { if ($_.PSIsContainer) { -1 } else { $_.Length } } }
-            'modified' { { $_.LastWriteTime } }
-            'accessed' { { $_.LastAccessTime } }
-            default { { $_.Name } }
+        # Use string property names where possible — Sort-Object uses .NET reflection directly,
+        # avoiding per-item scriptblock invocation overhead of the scriptblock form.
+        # 'size' needs a scriptblock because directories have no Length.
+        if ($Query.Sort -eq 'size') {
+            $result = @($result | Sort-Object -Property { if ($_.PSIsContainer) { -1 } else { $_.Length } } -Descending:([bool]$Query.Descending))
+        } else {
+            $property = switch ($Query.Sort) {
+                'modified' { 'LastWriteTime' }
+                'accessed' { 'LastAccessTime' }
+                default    { 'Name' }
+            }
+            $result = @($result | Sort-Object -Property $property -Descending:([bool]$Query.Descending))
         }
-        $result = @($result | Sort-Object -Property $expression -Descending:([bool]$Query.Descending))
     }
     elseif ($Query.Descending) {
         $result = @($result | Sort-Object -Property Name -Descending)
@@ -777,6 +740,39 @@ function Invoke-CleanCliListingQuery {
         return @($Items)
     }
 
-    $filtered = @($Items | Where-CleanCliListingItem -Query $Query)
+    $modifiedWithinCutoff  = if ($Query.ModifiedWithin)  { [DateTime]::Now - $Query.ModifiedWithin  } else { $null }
+    $modifiedBeforeCutoff  = if ($Query.ModifiedBefore)  { [DateTime]::Now - $Query.ModifiedBefore  } else { $null }
+    $accessedWithinCutoff  = if ($Query.AccessedWithin)  { [DateTime]::Now - $Query.AccessedWithin  } else { $null }
+    $accessedBeforeCutoff  = if ($Query.AccessedBefore)  { [DateTime]::Now - $Query.AccessedBefore  } else { $null }
+
+    $filtered = [System.Collections.Generic.List[System.IO.FileSystemInfo]]::new()
+    foreach ($item in $Items) {
+        if ($Query.TypeFilters.Count -gt 0) {
+            $matchesType = $false
+            foreach ($type in $Query.TypeFilters) {
+                if ($type -eq 'file'      -and -not $item.PSIsContainer -and -not (Test-CleanCliListingSymlink -Item $item)) { $matchesType = $true }
+                if ($type -eq 'directory' -and $item.PSIsContainer) { $matchesType = $true }
+                if ($type -eq 'symlink'   -and (Test-CleanCliListingSymlink -Item $item)) { $matchesType = $true }
+            }
+            if (-not $matchesType) { continue }
+        }
+
+        if ($Query.EmptyFilters.Count -gt 0) {
+            $isEmpty = Test-CleanCliListingEmptyDirectory -Item $item
+            if ($isEmpty -notin $Query.EmptyFilters) { continue }
+        }
+
+        if ($modifiedWithinCutoff  -and $item.LastWriteTime  -lt $modifiedWithinCutoff)  { continue }
+        if ($modifiedBeforeCutoff  -and $item.LastWriteTime  -gt $modifiedBeforeCutoff)  { continue }
+        if ($accessedWithinCutoff  -and $item.LastAccessTime -lt $accessedWithinCutoff)  { continue }
+        if ($accessedBeforeCutoff  -and $item.LastAccessTime -gt $accessedBeforeCutoff)  { continue }
+        if ($null -ne $Query.LargerThan  -and ($item.PSIsContainer -or $item.Length -le $Query.LargerThan))  { continue }
+        if ($null -ne $Query.SmallerThan -and ($item.PSIsContainer -or $item.Length -ge $Query.SmallerThan)) { continue }
+        if ($Query.NameLike       -and $item.Name -notlike $Query.NameLike) { continue }
+        if ($Query.Extensions.Count -gt 0 -and ([System.IO.Path]::GetExtension($item.Name).ToLowerInvariant()) -notin $Query.Extensions) { continue }
+
+        $filtered.Add($item)
+    }
+
     Sort-CleanCliListingItem -Items $filtered -Query $Query
 }
