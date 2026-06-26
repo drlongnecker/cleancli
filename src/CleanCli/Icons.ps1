@@ -21,6 +21,7 @@ $script:CleanCliDirectoryIcons = @{
     '.config'          = [string][char]0xe615
     '.docker'          = [string][char]0xe7b0
     '.vscode'          = [string][char]0xe70c
+    '.vscode-shared'   = [string][char]0xe70c
     '.vscode-insiders' = [string][char]0xe70c
     'contacts'         = [string][char]0xf0c0
     'desktop'          = [string][char]0xf108
@@ -36,11 +37,12 @@ $script:CleanCliDirectoryColors = @{
     '.config'          = $__ansi['87CEAF']
     '.docker'          = $__ansi['2391E6']
     '.vscode'          = $__ansi['87CEFA']
+    '.vscode-shared'   = $__ansi['87CEFA']
     '.vscode-insiders' = $__ansi['24BFA5']
     'contacts'         = $__ansi['00FBFF']
     'desktop'          = $__ansi['00FBFF']
     'documents'        = $__ansi['00BFFF']
-    'downloads'        = $__ansi['D3D3D3']
+    'downloads'        = $__ansi['00BFFF']
     'favorites'        = $__ansi['F7D72C']
     'links'            = $__ansi['FF143C']
     'music'            = $__ansi['DB7093']
@@ -428,6 +430,9 @@ function ConvertTo-CleanCliIconItem {
         $name = '{0} {1}' -f $Item.Name, $gitDetails
     }
     $plainDisplayName = "$icon  $name"
+    if ($Item.LinkTarget) {
+        $plainDisplayName = "$plainDisplayName -> $($Item.LinkTarget)"
+    }
     $color = Get-CleanCliIconColor -Item $Item -Metadata $Metadata
     $displayName = if ($color) {
         "$color$plainDisplayName$([char]27)[0m"
