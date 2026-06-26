@@ -3844,13 +3844,16 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
         Set-Content -LiteralPath (Join-Path $tempRoot 'hosts') -Value '127.0.0.1 localhost' -Encoding ASCII
         Set-Content -LiteralPath (Join-Path $tempRoot 'small.log') -Value 'small' -Encoding ASCII
         New-Item -ItemType Directory -Path (Join-Path $tempRoot 'logs') | Out-Null
+        $exactStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'exact4.bin'))
         $largeStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'large.log'))
         $recursiveStream = [System.IO.File]::OpenWrite((Join-Path $tempRoot 'logs\recursive.log'))
         try {
+            $exactStream.SetLength(4KB)
             $largeStream.SetLength(101KB)
             $recursiveStream.SetLength(101KB)
         }
         finally {
+            $exactStream.Dispose()
             $largeStream.Dispose()
             $recursiveStream.Dispose()
         }
@@ -3867,6 +3870,8 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
             $text | Should Match 'Mode\s+LastWriteTime\s+Length\s+Name'
             $text | Should Match '-a---\s+\d{1,2}/\d{1,2}/\d{4}\s+\d{1,2}:\d{2}'
             $text | Should Match 'hosts'
+            $text | Should Match '\s4K\s+.*exact4\.bin'
+            $text | Should Not Match '\s4096\s+.*exact4\.bin'
             $text | Should Not Match 'DisplayName\s+:'
             $text | Should Not Match 'FullName\s+:'
 
@@ -3875,6 +3880,10 @@ Set-Location '$($tempRoot.Replace("'", "''"))'
             $filteredText | Should Match 'Mode\s+LastWriteTime\s+Length\s+Name'
             $filteredText | Should Match 'large\.log'
             $filteredText | Should Not Match 'small\.log'
+
+            $exactItem = Get-CleanCliChildItem -Path $tempRoot | Where-Object Name -eq 'exact4.bin'
+            $exactItem.Length | Should Be 4096
+            ($exactItem.Length -is [int64]) | Should Be $true
 
             $recursiveText = Get-CleanCliChildItem -Path $tempRoot -Recurse -Qualifier '.L+100k*.log' | Out-String
 

@@ -42,7 +42,9 @@
                 </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
-                <PropertyName>Length</PropertyName>
+                <ScriptBlock>
+                  if ($null -eq $_.Length) { '' } elseif ($_.Length -lt 1KB) { [string]$_.Length } elseif ($_.Length -lt 1MB) { '{0:N0}K' -f ($_.Length / 1KB) } elseif ($_.Length -lt 1GB) { '{0:N1}M' -f ($_.Length / 1MB) } else { '{0:N1}G' -f ($_.Length / 1GB) }
+                </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>DisplayName</PropertyName>
@@ -90,7 +92,9 @@
                 </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
-                <PropertyName>Length</PropertyName>
+                <ScriptBlock>
+                  if ($null -eq $_.Length) { '' } elseif ($_.Length -lt 1KB) { [string]$_.Length } elseif ($_.Length -lt 1MB) { '{0:N0}K' -f ($_.Length / 1KB) } elseif ($_.Length -lt 1GB) { '{0:N1}M' -f ($_.Length / 1MB) } else { '{0:N1}G' -f ($_.Length / 1GB) }
+                </ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>DisplayName</PropertyName>
