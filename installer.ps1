@@ -130,6 +130,13 @@ if (`$env:CLEANCLI_DISABLE -ne '1') {
         Enable-CleanCli
     }
 }
+if (`$env:TERM_PROGRAM -eq 'vscode') {
+    `$__vscodeIntegrationPath = code --locate-shell-integration-path pwsh 2>`$null
+    if (`$__vscodeIntegrationPath -and (Test-Path -LiteralPath `$__vscodeIntegrationPath)) {
+        . `$__vscodeIntegrationPath
+    }
+    Remove-Variable __vscodeIntegrationPath -ErrorAction SilentlyContinue
+}
 "@
 
     Add-Content -LiteralPath $Path -Value $block -Encoding UTF8
