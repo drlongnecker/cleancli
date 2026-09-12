@@ -199,8 +199,7 @@ function Get-CleanCliGitOptions {
 function Get-CleanCliGitRefs {
     param([string]$Kind = 'all')
 
-    $key = "refs:${Kind}:$((Get-Location).ProviderPath)"
-    $cached = Get-CleanCliGitCompletionCacheValue -Key $key -MaxAgeMilliseconds 1000
+    $cached = Get-CleanCliGitCompletionCacheValue -Key $key -MaxAgeMilliseconds 10000
     if ($null -ne $cached) { return @($cached) }
 
     $prefixes = switch ($Kind) {
@@ -217,8 +216,7 @@ function Get-CleanCliGitRefs {
 
 function Get-CleanCliGitRemotes {
     $key = "remotes:$((Get-Location).ProviderPath)"
-    $cached = Get-CleanCliGitCompletionCacheValue -Key $key -MaxAgeMilliseconds 1000
-    if ($null -ne $cached) { return @($cached) }
+    $cached = Get-CleanCliGitCompletionCacheValue -Key $key -MaxAgeMilliseconds 10000
     $result = Invoke-CleanCliGitCompletionCommand -Arguments @('remote')
     $value = @($result.Lines | Sort-Object -Unique)
     Set-CleanCliGitCompletionCacheValue -Key $key -Value $value

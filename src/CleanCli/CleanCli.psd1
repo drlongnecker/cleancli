@@ -1,6 +1,6 @@
 @{
     RootModule = 'CleanCli.psm1'
-    ModuleVersion = '0.1.0'
+    ModuleVersion = '1.7.0'
     GUID = '8f9d13e4-0e8d-4fd6-9a12-5f1a9db15f47'
     Author = 'David Longnecker'
     CompanyName = 'CleanCli'

@@ -5,6 +5,15 @@ function Find-CleanCliGitRepository {
         return $null
     }
 
+    $normalized = [System.IO.Path]::GetFullPath($Path)
+    if ($script:CleanCliGitRepoCache.ContainsKey($normalized)) {
+        $entry = $script:CleanCliGitRepoCache[$normalized]
+        if (((Get-Date) - $entry.At).TotalSeconds -lt 5) {
+            return $entry.Repo
+        }
+        $script:CleanCliGitRepoCache.Remove($normalized)
+    }
+
     $item = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
     if ($null -eq $item) {
         return $null
@@ -13,36 +22,42 @@ function Find-CleanCliGitRepository {
     $directory = if ($item.PSIsContainer) { $item } else { $item.Directory }
     while ($null -ne $directory) {
         if (Test-CleanCliBareGitDirectory -Path $directory.FullName) {
-            return [pscustomobject]@{
+            $repo = [pscustomobject]@{
                 Root = $directory.FullName
                 GitDir = $directory.FullName
                 HeadPath = Join-Path $directory.FullName 'HEAD'
                 IndexPath = Join-Path $directory.FullName 'index'
             }
+            $script:CleanCliGitRepoCache[$normalized] = @{ Repo = $repo; At = Get-Date }
+            return $repo
         }
 
         $gitPath = Join-Path $directory.FullName '.git'
         if (Test-Path -LiteralPath $gitPath) {
             $gitItem = Get-Item -LiteralPath $gitPath -Force
             if ($gitItem.PSIsContainer) {
-                return [pscustomobject]@{
+                $repo = [pscustomobject]@{
                     Root = $directory.FullName
                     GitDir = $gitItem.FullName
                     HeadPath = Join-Path $gitItem.FullName 'HEAD'
                     IndexPath = Join-Path $gitItem.FullName 'index'
                 }
+                $script:CleanCliGitRepoCache[$normalized] = @{ Repo = $repo; At = Get-Date }
+                return $repo
             }
 
             $content = Get-Content -LiteralPath $gitPath -TotalCount 1 -ErrorAction SilentlyContinue
             if ($content -match '^gitdir:\s*(.+)$') {
                 $resolvedGitDir = Resolve-CleanCliGitPath -BasePath $directory.FullName -GitPath $matches[1]
                 if (Test-Path -LiteralPath $resolvedGitDir) {
-                    return [pscustomobject]@{
+                    $repo = [pscustomobject]@{
                         Root = $directory.FullName
                         GitDir = $resolvedGitDir
                         HeadPath = Join-Path $resolvedGitDir 'HEAD'
                         IndexPath = Join-Path $resolvedGitDir 'index'
                     }
+                    $script:CleanCliGitRepoCache[$normalized] = @{ Repo = $repo; At = Get-Date }
+                    return $repo
                 }
             }
         }
@@ -107,16 +122,7 @@ function Get-CleanCliGitCacheKey {
         [string]$Path
     )
 
-    $headTicks = 0
-    $indexTicks = 0
-    if (Test-Path -LiteralPath $Repository.HeadPath) {
-        $headTicks = (Get-Item -LiteralPath $Repository.HeadPath).LastWriteTimeUtc.Ticks
-    }
-    if (Test-Path -LiteralPath $Repository.IndexPath) {
-        $indexTicks = (Get-Item -LiteralPath $Repository.IndexPath).LastWriteTimeUtc.Ticks
-    }
-
-    '{0}|{1}|{2}|{3}|{4}|{5}|{6}' -f $Repository.Root, $Path, $headTicks, $indexTicks, $script:CleanCliOptions.GitUntrackedMode, $script:CleanCliOptions.GitIgnoreSubmodules, $script:CleanCliOptions.GitDivergenceMode
+    '{0}|{1}|{2}|{3}|{4}' -f $Repository.Root, $Path, $script:CleanCliOptions.GitUntrackedMode, $script:CleanCliOptions.GitIgnoreSubmodules, $script:CleanCliOptions.GitDivergenceMode
 }
 
 function Get-CleanCliGitStatusArguments {
@@ -381,9 +387,13 @@ function Start-CleanCliGitAsyncRefresh {
         return
     }
 
+    if (-not (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue)) {
+        return
+    }
+
     $timeout = $script:CleanCliGitTimeoutMilliseconds
     $root = $Repository.Root
-    $job = Start-Job -ScriptBlock {
+    $job = Start-ThreadJob -ScriptBlock {
         param($RepositoryRoot, $GitArguments, $TimeoutMilliseconds)
 
         $process = New-Object System.Diagnostics.Process
@@ -401,6 +411,8 @@ function Start-CleanCliGitAsyncRefresh {
 
         try {
             [void]$process.Start()
+            $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+            $stderrTask = $process.StandardError.ReadToEndAsync()
             if (-not $process.WaitForExit($TimeoutMilliseconds)) {
                 try {
                     $process.Kill()
@@ -410,7 +422,8 @@ function Start-CleanCliGitAsyncRefresh {
                 return $null
             }
 
-            $output = $process.StandardOutput.ReadToEnd()
+            $output = $stdoutTask.Result
+            $errorOutput = $stderrTask.Result
             if ($process.ExitCode -ne 0) {
                 return $null
             }
@@ -526,31 +539,40 @@ function Invoke-CleanCliGit {
         }
     }
 
-    $stdout = [System.IO.Path]::GetTempFileName()
-    $stderr = [System.IO.Path]::GetTempFileName()
-    $process = New-Object System.Diagnostics.Process
-    $process.StartInfo.FileName = 'git.exe'
-    foreach ($argument in $Arguments) {
-        [void]$process.StartInfo.ArgumentList.Add($argument)
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if (-not $git) {
+        $git = Get-Command git -ErrorAction SilentlyContinue
     }
-    $process.StartInfo.WorkingDirectory = $RepositoryRoot
-    $process.StartInfo.UseShellExecute = $false
-    $process.StartInfo.CreateNoWindow = $true
-    $process.StartInfo.RedirectStandardOutput = $false
-    $process.StartInfo.RedirectStandardError = $false
-    $process.StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
-    $process.StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
-    $process.StartInfo.RedirectStandardOutput = $true
-    $process.StartInfo.RedirectStandardError = $true
+    if (-not $git) {
+        return $null
+    }
 
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $git.Source
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $startInfo.WorkingDirectory = $RepositoryRoot
+    $startInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $startInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $startInfo.Environment['GIT_OPTIONAL_LOCKS'] = '0'
+    $startInfo.Environment['GIT_TERMINAL_PROMPT'] = '0'
+    foreach ($argument in $Arguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+
+    $process = [System.Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
     try {
-        [void]$process.Start()
+        if (-not $process.Start()) {
+            return $null
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
         if (-not $process.WaitForExit($script:CleanCliGitTimeoutMilliseconds)) {
-            try {
-                $process.Kill()
-            }
-            catch {
-            }
+            $process.Kill($true)
             $script:CleanCliState.LastSlowGit = [pscustomobject]@{
                 RepositoryRoot = $RepositoryRoot
                 Arguments = $Arguments -join ' '
@@ -561,8 +583,8 @@ function Invoke-CleanCliGit {
             return $null
         }
 
-        $output = $process.StandardOutput.ReadToEnd()
-        $errorOutput = $process.StandardError.ReadToEnd()
+        $output = $stdoutTask.Result
+        $errorOutput = $stderrTask.Result
         if ($process.ExitCode -ne 0) {
             $script:CleanCliState.LastSlowGit = [pscustomobject]@{
                 RepositoryRoot = $RepositoryRoot
@@ -577,10 +599,12 @@ function Invoke-CleanCliGit {
 
         $output
     }
+    catch {
+        return $null
+    }
     finally {
         $timer.Stop()
         $script:CleanCliState.LastGitDurationMilliseconds = $timer.Elapsed.TotalMilliseconds
-        Remove-Item -LiteralPath $stdout, $stderr -Force -ErrorAction SilentlyContinue
         if ($null -ne $process) {
             $process.Dispose()
         }

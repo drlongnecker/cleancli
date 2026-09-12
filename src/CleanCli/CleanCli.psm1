@@ -40,6 +40,7 @@ $script:CleanCliProfileState = [ordered]@{
 }
 $script:CleanCliProfilePromptReader = $null
 $script:CleanCliMachineIdentifierOverride = $null
+$script:CleanCliGitRepoCache = @{}
 $script:CleanCliGitCache = @{}
 $script:CleanCliGitLastSuccessful = @{}
 $script:CleanCliGitAsyncRefreshes = @{}
@@ -56,10 +57,10 @@ $script:CleanCliGitAsyncCommand = $null
 $script:CleanCliDirectoryReadAheadCommand = $null
 $script:CleanCliCommandDurationProvider = $null
 $script:CleanCliGitTimeoutMilliseconds = 1000
-$script:CleanCliGitCacheMilliseconds = 750
+$script:CleanCliGitCacheMilliseconds = 5000
 $script:CleanCliDefaultOptions = [ordered]@{
     GitTimeoutMilliseconds = 1000
-    GitCacheMilliseconds = 750
+    GitCacheMilliseconds = 5000
     GitLastSuccessfulMaxAgeMilliseconds = 30000
     GitSlowSuppressionTimeouts = 2
     GitUntrackedMode = 'normal'
@@ -151,6 +152,11 @@ function Enable-CleanCli {
     $script:CleanCliState.Enabled = $true
     $script:CleanCliState.LoadStatus = 'enabled'
     $script:CleanCliState.LoadReason = "$($script:CleanCliState.HostName) host enabled."
+
+    $version = (Get-Module CleanCli).Version.ToString()
+    $cyan = [char]27 + '[96m'
+    $reset = [char]27 + '[0m'
+    Write-Host "${cyan}CleanCLI v$version${reset}"
 }
 
 function Disable-CleanCli {

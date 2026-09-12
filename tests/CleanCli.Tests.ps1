@@ -134,7 +134,7 @@ Describe 'CleanCli module behavior' {
             $options = Get-CleanCliOption
 
             $options.GitTimeoutMilliseconds | Should Be 1000
-            $options.GitCacheMilliseconds | Should Be 750
+            $options.GitCacheMilliseconds | Should Be 5000
             $options.GitUntrackedMode | Should Be 'normal'
             $options.GitIgnoreSubmodules | Should Be 'none'
             $options.GitStatusMode | Should Be 'full'
