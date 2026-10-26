@@ -380,6 +380,11 @@ function Invoke-CleanCliPrompt {
             $segments.Add((New-CleanCliAdminSegment))
         }
 
+        if ($env:SSH_CONNECTION -or $env:SSH_CLIENT) {
+            $identityText = '{0}@{1}' -f [Environment]::UserName, [Environment]::MachineName
+            $segments.Add((New-CleanCliSegment -Text $identityText -Foreground White -Background Blue))
+        }
+
         $pathText = '{0} {1}' -f $symbols.Path, (Get-CleanCliShortPath)
         $segments.Add((New-CleanCliSegment -Text $pathText -Foreground $options.PathForeground -Background $options.PathBackground))
 

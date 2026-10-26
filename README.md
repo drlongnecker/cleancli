@@ -197,6 +197,8 @@ Set `TransientPrompt = $true` to ask PSReadLine to rewrite previous prompts to t
 
 Set `RightPrompt = $true` to render git and command duration segments on the right side of ANSI-capable terminals. CleanCli falls back to the normal left prompt when color is disabled or cursor positioning is unavailable.
 
+In PowerShell over SSH, CleanCli automatically adds a white-on-blue `user@machine` segment immediately before the folder segment when `SSH_CONNECTION` or `SSH_CLIENT` is set. Local prompts stay unchanged. The blue shade follows your terminal palette; `NO_COLOR` disables segment colors.
+
 Set prompt symbol options such as `PathSymbol`, `GitSymbol`, `DirtySymbol`, `AdminSymbol`, `TimeSymbol`, and `PromptSeparator` to override built-in glyphs without downloading themes. Leave them as `auto` to use Powerline glyphs or ASCII fallbacks based on `AsciiMode`.
 
 Set segment color options such as `PathForeground`, `PathBackground`, `GitForeground`, `GitBackground`, `TimeForeground`, `TimeBackground`, `AdminForeground`, and `AdminBackground` to one of `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, or `Default`.

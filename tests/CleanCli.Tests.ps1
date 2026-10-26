@@ -1588,7 +1588,96 @@ Describe 'CleanCli module behavior' {
             }
         }
     }
+    It 'renders SSH identity before the path and leaves local prompt unchanged' {
+        $oldConnection = $env:SSH_CONNECTION
+        $oldClient = $env:SSH_CLIENT
+        $oldNoColor = $env:NO_COLOR
+        $oldAscii = $env:CLEANCLI_ASCII
+        try {
+            $env:SSH_CONNECTION = $null
+            $env:SSH_CLIENT = $null
+            $env:NO_COLOR = $null
+            $env:CLEANCLI_ASCII = $null
+            InModuleScope CleanCli {
+                $oldAsciiMode = $script:CleanCliOptions.AsciiMode
+                $oldGitCommand = $script:CleanCliGitCommand
+                try {
+                    $script:CleanCliOptions.AsciiMode = $false
+                    $script:CleanCliGitCommand = { throw 'prompt test should not git outside repository' }
+                    Push-Location $env:TEMP
+                    try {
+                        $localPrompt = Invoke-CleanCliPrompt
+                        $env:SSH_CONNECTION = '127.0.0.1 22 127.0.0.1 50000'
+                        $sshPrompt = Invoke-CleanCliPrompt
+                        $env:SSH_CONNECTION = $null
+                        $env:SSH_CLIENT = '127.0.0.1 50000 22'
+                        $sshClientPrompt = Invoke-CleanCliPrompt
+                        $escape = [char]27
+                        $identity = '{0}[37;44m {1}@{2} {0}[0m' -f $escape, [Environment]::UserName, [Environment]::MachineName
+                        $pathText = '{0} {1}' -f (Get-CleanCliSymbols).Path, (Get-CleanCliShortPath)
+                        $expectedPath = ' {0} ' -f $pathText
+                        $sshPrompt.Contains($identity) | Should Be $true
+                        $sshPrompt.Contains($expectedPath) | Should Be $true
+                        $sshPrompt.IndexOf($identity) | Should BeLessThan $sshPrompt.IndexOf($expectedPath)
+                        $sshClientPrompt.Contains($identity) | Should Be $true
+                        $localPrompt.Contains($identity) | Should Be $false
+                        $localPrompt.Contains($expectedPath) | Should Be $true
+                    }
+                    finally {
+                        Pop-Location
+                    }
+                }
+                finally {
+                    $script:CleanCliOptions.AsciiMode = $oldAsciiMode
+                    $script:CleanCliGitCommand = $oldGitCommand
+                }
+            }
+        }
+        finally {
+            $env:SSH_CONNECTION = $oldConnection
+            $env:SSH_CLIENT = $oldClient
+            $env:NO_COLOR = $oldNoColor
+            $env:CLEANCLI_ASCII = $oldAscii
+        }
+    }
 
+    It 'renders SSH identity through NO_COLOR and ASCII prompt formatting' {
+        $oldConnection = $env:SSH_CONNECTION
+        $oldNoColor = $env:NO_COLOR
+        $oldAscii = $env:CLEANCLI_ASCII
+        try {
+            $env:SSH_CONNECTION = '127.0.0.1 22 127.0.0.1 50000'
+            $env:NO_COLOR = '1'
+            $env:CLEANCLI_ASCII = '1'
+            InModuleScope CleanCli {
+                $oldAsciiMode = $script:CleanCliOptions.AsciiMode
+                $oldGitCommand = $script:CleanCliGitCommand
+                try {
+                    $script:CleanCliOptions.AsciiMode = $true
+                    $script:CleanCliGitCommand = { throw 'prompt test should not git outside repository' }
+                    Push-Location $env:TEMP
+                    try {
+                        $prompt = Invoke-CleanCliPrompt
+                        $prompt.Contains((' {0}@{1} ' -f [Environment]::UserName, [Environment]::MachineName)) | Should Be $true
+                        $prompt.Contains([string][char]27) | Should Be $false
+                        $prompt.IndexOf('admin') | Should BeLessThan $prompt.IndexOf('dir:')
+                    }
+                    finally {
+                        Pop-Location
+                    }
+                }
+                finally {
+                    $script:CleanCliOptions.AsciiMode = $oldAsciiMode
+                    $script:CleanCliGitCommand = $oldGitCommand
+                }
+            }
+        }
+        finally {
+            $env:SSH_CONNECTION = $oldConnection
+            $env:NO_COLOR = $oldNoColor
+            $env:CLEANCLI_ASCII = $oldAscii
+        }
+    }
     It 'renders an explicit two-line prompt layout' {
         $tempRoot = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $tempRoot | Out-Null
