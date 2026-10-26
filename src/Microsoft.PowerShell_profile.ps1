@@ -1,6 +1,8 @@
 if ($env:CLEANCLI_DISABLE -ne '1') {
     if ($env:CLEANCLI_INTERACTIVE_ONLY -eq '0' -or -not ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected)) {
-        $OutputEncoding = [System.Text.Encoding]::UTF8
+        $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+        [Console]::InputEncoding = $OutputEncoding
+        [Console]::OutputEncoding = $OutputEncoding
 
         $cleanCliModule = Join-Path (Split-Path -Path $PSScriptRoot -Parent) 'src\CleanCli\CleanCli.psd1'
         if (Test-Path -LiteralPath $cleanCliModule) {

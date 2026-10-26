@@ -199,6 +199,18 @@ Set `RightPrompt = $true` to render git and command duration segments on the rig
 
 In PowerShell over SSH, CleanCli automatically adds a white-on-blue `user@machine` segment immediately before the folder segment when `SSH_CONNECTION` or `SSH_CLIENT` is set. Local prompts stay unchanged. The blue shade follows your terminal palette; `NO_COLOR` disables segment colors.
 
+The bundled profiles and newly generated installer autoload blocks set console input, console output, and `$OutputEncoding` to BOM-less UTF-8 before loading CleanCli, inside the existing disable and interactive guards. `CLEANCLI_DISABLE=1` leaves encoding unchanged; redirected sessions are skipped unless `CLEANCLI_INTERACTIVE_ONLY=0`. Existing user profiles are not rewritten by module updates. To update an existing profile, put these assignments inside its interactive guard, before `Import-Module CleanCli`:
+
+```powershell
+$OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $OutputEncoding
+[Console]::OutputEncoding = $OutputEncoding
+```
+
+Windows SSH servers can clear the terminal when allocating a ConPTY, before the PowerShell profile runs ([Win32-OpenSSH #1738](https://github.com/PowerShell/Win32-OpenSSH/issues/1738)). CleanCli does not filter SSH output or prevent that clear. Use a separate terminal tab to keep the current tab undisturbed.
+
+For automation, use `ssh -T` without a pseudo-terminal and initialize UTF-8 explicitly inside the remote PowerShell script; do not depend on interactive profiles. Legacy programs may still emit another encoding when redirected ([#2468](https://github.com/PowerShell/Win32-OpenSSH/issues/2468)). Missing font glyphs are separate from encoding errors: use the existing `AsciiMode` or `CLEANCLI_ASCII=1` fallback when needed. No system-wide code-page or SSH default-shell changes are required.
+
 Set prompt symbol options such as `PathSymbol`, `GitSymbol`, `DirtySymbol`, `AdminSymbol`, `TimeSymbol`, and `PromptSeparator` to override built-in glyphs without downloading themes. Leave them as `auto` to use Powerline glyphs or ASCII fallbacks based on `AsciiMode`.
 
 Set segment color options such as `PathForeground`, `PathBackground`, `GitForeground`, `GitBackground`, `TimeForeground`, `TimeBackground`, `AdminForeground`, and `AdminBackground` to one of `Black`, `Red`, `Green`, `Yellow`, `Blue`, `Magenta`, `Cyan`, `White`, `DarkGray`, or `Default`.

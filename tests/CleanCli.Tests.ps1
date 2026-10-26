@@ -20,11 +20,32 @@ Describe 'CleanCli profile bootstrap' {
         $profileText | Should Not Match 'Import-Module\s+Terminal-Icons'
     }
 
-    It 'contains a CleanCli disable gate' {
-        $profileText = Get-Content -LiteralPath $ProfilePath -Raw
-
-        $profileText | Should Match 'CLEANCLI_DISABLE'
-        $profileText | Should Match 'Enable-CleanCli'
+    It 'leaves console and native pipeline encodings unchanged when disabled' {
+        $savedInput = [Console]::InputEncoding
+        $savedOutput = [Console]::OutputEncoding
+        $savedPipeline = $OutputEncoding
+        $savedDisable = $env:CLEANCLI_DISABLE
+        $savedTerminal = $env:TERM_PROGRAM
+        try {
+            $env:CLEANCLI_DISABLE = '1'
+            $env:TERM_PROGRAM = ''
+            [Console]::InputEncoding = [Text.Encoding]::GetEncoding(437)
+            [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(437)
+            $OutputEncoding = [Text.Encoding]::ASCII
+            foreach ($bootstrap in @($ProfilePath, (Join-Path $ProjectRoot 'src\CleanCli\Profile.ps1'))) {
+                . $bootstrap
+                [Console]::InputEncoding.CodePage | Should Be 437
+                [Console]::OutputEncoding.CodePage | Should Be 437
+                $OutputEncoding.CodePage | Should Be 20127
+            }
+        }
+        finally {
+            [Console]::InputEncoding = $savedInput
+            [Console]::OutputEncoding = $savedOutput
+            $OutputEncoding = $savedPipeline
+            $env:CLEANCLI_DISABLE = $savedDisable
+            $env:TERM_PROGRAM = $savedTerminal
+        }
     }
 
     It 'does not define legacy helper functions outside the module' {
